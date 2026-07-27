@@ -714,13 +714,57 @@ def _fmt_dt(dt):
     return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+CONTACT_DATASET = os.environ.get("CONTACT_DATASET", "cafe24_pii")
+CONTACT_TABLE_ID = f"{BQ_PROJECT}.{CONTACT_DATASET}.rf_cafe24_customer_contact"
+CONTACT_SCHEMA = [
+    bigquery.SchemaField("report_date", "DATE"),
+    bigquery.SchemaField("mall", "STRING"),
+    bigquery.SchemaField("order_id", "STRING"),
+    bigquery.SchemaField("member_id", "STRING"),
+    bigquery.SchemaField("buyer_name", "STRING"),
+    bigquery.SchemaField("buyer_cellphone", "STRING"),
+    bigquery.SchemaField("buyer_phone", "STRING"),
+    bigquery.SchemaField("buyer_email", "STRING"),
+    bigquery.SchemaField("receiver_name", "STRING"),
+    bigquery.SchemaField("receiver_cellphone", "STRING"),
+    bigquery.SchemaField("ordered_at", "STRING"),
+    bigquery.SchemaField("ingested_at", "TIMESTAMP"),
+]
+def _sv(x):
+    if x is None:
+        return None
+    v = str(x).strip()
+    return v or None
+def _contact_row(o, d, oid, s):
+    """주문 buyer/receivers -> 연락처 원문 1행(제한 테이블용). 연락처 전무면 None."""
+    b = o.get("buyer") or {}
+    recs = o.get("receivers") or []
+    r = recs[0] if (recs and isinstance(recs[0], dict)) else {}
+    cell = _sv(b.get("cellphone")) or _sv(b.get("phone")) or _sv(r.get("cellphone"))
+    name = _sv(b.get("name")) or _sv(r.get("name"))
+    if not (cell or name):
+        return None
+    return {
+        "report_date": d, "mall": s["mall"], "order_id": oid,
+        "member_id": _s(o, "member_id"),
+        "buyer_name": _sv(b.get("name")),
+        "buyer_cellphone": _sv(b.get("cellphone")),
+        "buyer_phone": _sv(b.get("phone")),
+        "buyer_email": _sv(b.get("email")) or _sv(o.get("member_email")),
+        "receiver_name": _sv(r.get("name")),
+        "receiver_cellphone": _sv(r.get("cellphone")),
+        "ordered_at": _s(o, "order_date", "payment_date"),
+        "ingested_at": now_utc_iso(),
+    }
+
+
 def collect_orders_window(token_mgr, s, w_since, w_until):
     """구간 주문 수집. offset 상한(15000) 회피: 주문수가 상한 이상이면 구간을 재귀
     이분할(날짜→시간 단위까지)해 각 하위구간이 상한 미만이 되게 함. 대량 프로모션
     일자(하루 3만건 등)도 시간대로 쪼개 완전 수집."""
     cnt = orders_count(token_mgr, s["shop_no"], w_since, w_until)
     if not cnt:
-        return [], []
+        return [], [], []
     if cnt < ORDERS_OFFSET_CAP:
         return _paginate_orders(token_mgr, s, w_since, w_until)
     a, b = _to_dt(w_since), _to_dt(w_until, end=True)
@@ -729,10 +773,10 @@ def collect_orders_window(token_mgr, s, w_since, w_until):
                     s["mall"], w_since, w_until, cnt, ORDERS_OFFSET_CAP)
         return _paginate_orders(token_mgr, s, w_since, w_until)
     mid = a + (b - a) / 2
-    o1, i1 = collect_orders_window(token_mgr, s, _fmt_dt(a), _fmt_dt(mid))
-    o2, i2 = collect_orders_window(
+    o1, i1, c1 = collect_orders_window(token_mgr, s, _fmt_dt(a), _fmt_dt(mid))
+    o2, i2, c2 = collect_orders_window(
         token_mgr, s, _fmt_dt(mid + timedelta(seconds=1)), _fmt_dt(b))
-    return o1 + o2, i1 + i2
+    return o1 + o2, i1 + i2, c1 + c2
 
 
 def _buyer_hash(o):
@@ -755,7 +799,7 @@ def _buyer_hash(o):
 
 def _paginate_orders(token_mgr, s, w_since, w_until):
     """단일 구간(주문수 < 상한) offset 페이지네이션 수집."""
-    orders, items = [], []
+    orders, items, contacts = [], [], []
     offset = 0
     while True:
         params = {"shop_no": s["shop_no"], "start_date": w_since,
@@ -772,8 +816,11 @@ def _paginate_orders(token_mgr, s, w_since, w_until):
             d = _order_date(o) or w_until
             oid = _s(o, "order_id")
             bh = _buyer_hash(o)
+            _ct = _contact_row(o, d, oid, s)
+            if _ct:
+                contacts.append(_ct)
             o.pop("buyer", None)
-            o.pop("receivers", None)  # PII 제거: raw_json엀 해시만 남김
+            o.pop("receivers", None)  # PII 제거: raw_json엔 해시만(연락처 원문은 cafe24_pii 테이블로)
             orders.append({
                 "report_date": d, "order_id": oid,
                 "shop_no": s["shop_no"], "mall": s["mall"],
@@ -807,7 +854,7 @@ def _paginate_orders(token_mgr, s, w_since, w_until):
                         s["mall"], w_since, w_until)
             break
         time.sleep(SLEEP_BETWEEN)
-    return orders, items
+    return orders, items, contacts
 
 
 def collect_products(token_mgr, shops):
@@ -901,13 +948,15 @@ def run_orders(client, token_mgr, shops, since_s, until_s):
     # 30일 구간마다(양쪽 몰 합쳐) 즉시 적재 → 대량월도 메모리 한정. 구간 내부는
     # collect_orders_window 가 주문수 기준으로 자동 이분할(offset 상한 회피).
     for w_since, w_until in window_range(since_s, until_s, days=30):
-        w_orders, w_items = [], []
+        w_orders, w_items, w_contacts = [], [], []
         for s in shops:
-            o, i = collect_orders_window(token_mgr, s, w_since, w_until)
+            o, i, c = collect_orders_window(token_mgr, s, w_since, w_until)
             w_orders += o
             w_items += i
+            w_contacts += c
         load_by_partition(client, o_id, ORDERS_SCHEMA, w_orders, "report_date")
         load_by_partition(client, i_id, ORDER_ITEMS_SCHEMA, w_items, "report_date")
+        load_by_partition(client, CONTACT_TABLE_ID, CONTACT_SCHEMA, w_contacts, "report_date")
     if not IS_D0 and MAKE_MALL_VIEWS:
         ensure_views(client, o_table, shops)
         ensure_views(client, i_table, shops)
