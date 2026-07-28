@@ -821,6 +821,7 @@ def _paginate_orders(token_mgr, s, w_since, w_until):
                 contacts.append(_ct)
             o.pop("buyer", None)
             o.pop("receivers", None)  # PII 제거: raw_json엔 해시만(연락처 원문은 cafe24_pii 테이블로)
+            o.pop("member_email", None)  # PII 제거: 회원 이메일 원문도 raw_json에서 제거(이메일은 cafe24_pii 연락처 테이블에 보관)
             orders.append({
                 "report_date": d, "order_id": oid,
                 "shop_no": s["shop_no"], "mall": s["mall"],
