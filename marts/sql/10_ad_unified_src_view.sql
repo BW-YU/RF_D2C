@@ -1,4 +1,4 @@
--- 매체 통합 소스 뷰: 메타 + 네이버 + 구글(DTS)을 공통 컬럼으로 통일 (캠페인 단위)
+-- 매체 통합 소스 뷰: 메타 + 네이버 + 구글(DTS 과거 + Ads Scripts 당일) + 카카오를 공통 컬럼으로 통일 (캠페인 단위)
 -- 몰 구분: 메타=account_id, 네이버=account, 구글=customer_id
 CREATE OR REPLACE VIEW `rf-ads-db-500505.mart.ad_unified_src` AS
 WITH meta AS (
@@ -25,28 +25,25 @@ naver AS (
   WHERE report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR) AND level='campaign'
   GROUP BY report_date, mall, campaign_id
 ),
+-- 구글: rf_google_campaign_current = 과거(DTS, segments_date<오늘) + 당일(Ads Scripts intraday, cloop/sprint 계정별). 당일까지 포함.
 g_stats AS (
-  SELECT segments_date AS report_date,
-    CASE customer_id WHEN 2580015098 THEN 'cloop' WHEN 2082026590 THEN 'sprint' ELSE 'unknown' END AS mall,
-    campaign_id,
-    SUM(metrics_impressions) AS impressions,
-    SUM(metrics_clicks) AS clicks,
-    SUM(metrics_cost_micros)/1e6 AS cost,
-    SUM(metrics_conversions) AS conversions,
-    SUM(metrics_conversions_value) AS conversion_value
-  FROM `rf-ads-db-500505.google_ads_raw.p_ads_CampaignBasicStats_3030273599`
-  WHERE segments_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
+  SELECT report_date, mall,
+    CAST(campaign_id AS STRING) AS campaign_id,
+    ANY_VALUE(campaign_name) AS campaign_name,
+    SUM(impressions) AS impressions,
+    SUM(clicks) AS clicks,
+    SUM(cost) AS cost,
+    SUM(conversions) AS conversions,
+    SUM(conversion_value) AS conversion_value
+  FROM `rf-ads-db-500505.google_ads_raw.rf_google_campaign_current`
+  WHERE report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
   GROUP BY report_date, mall, campaign_id
 ),
-g_name AS (
-  SELECT campaign_id, ANY_VALUE(campaign_name) AS campaign_name
-  FROM `rf-ads-db-500505.google_ads_raw.p_ads_Campaign_3030273599` GROUP BY campaign_id
-),
 google AS (
-  SELECT s.report_date, s.mall, 'google' AS media, CAST(s.campaign_id AS STRING) AS campaign_id,
-    n.campaign_name, CAST(NULL AS STRING) AS landing,
-    s.impressions, s.clicks, s.cost, s.conversions, s.conversion_value
-  FROM g_stats s LEFT JOIN g_name n USING (campaign_id)
+  SELECT report_date, mall, 'google' AS media, campaign_id,
+    campaign_name, CAST(NULL AS STRING) AS landing,
+    impressions, clicks, cost, conversions, conversion_value
+  FROM g_stats
 ),
 -- 카카오모먼트: 캠페인 단위(rf_kakao_campaign). 몰=광고계정, 전환은 미수집(NULL).
 kakao AS (
