@@ -1,4 +1,4 @@
--- 매체 통합 소스 뷰: 메타 + 네이버 + 구글(DTS 과거 + Ads Scripts 당일) + 카카오를 공통 컬럼으로 통일 (캠페인 단위)
+-- 매체 통합 소스 뷰: 메타 + 네이버 + 구글(영구 일별 원장: DTS백필 과거 + Ads Scripts 당일/이력) + 카카오를 공통 컬럼으로 통일 (캠페인 단위)
 -- 몰 구분: 메타=account_id, 네이버=account, 구글=customer_id
 CREATE OR REPLACE VIEW `rf-ads-db-500505.mart.ad_unified_src` AS
 WITH meta AS (
@@ -25,7 +25,8 @@ naver AS (
   WHERE report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR) AND level='campaign'
   GROUP BY report_date, mall, campaign_id
 ),
--- 구글: rf_google_campaign_current = 과거(DTS, segments_date<오늘) + 당일(Ads Scripts intraday, cloop/sprint 계정별). 당일까지 포함.
+-- 구글: rf_google_campaign_daily = 영구 파티션 원장(rf_google_campaign_daily_cloop/_sprint UNION). DTS백필 과거 + Ads Scripts 매시간 적재(당일 포함).
+--   ※ 2026-07-31 rf_google_campaign_current(DTS<오늘 UNION 옛 intraday)에서 전환: 스크립트 컷오버 후 intraday 미적재로 당일/어제 구멍 발생 → 영구 원장으로 재연결.
 g_stats AS (
   SELECT report_date, mall,
     CAST(campaign_id AS STRING) AS campaign_id,
@@ -35,7 +36,7 @@ g_stats AS (
     SUM(cost) AS cost,
     SUM(conversions) AS conversions,
     SUM(conversion_value) AS conversion_value
-  FROM `rf-ads-db-500505.google_ads_raw.rf_google_campaign_current`
+  FROM `rf-ads-db-500505.google_ads_raw.rf_google_campaign_daily`
   WHERE report_date >= DATE_SUB(CURRENT_DATE('Asia/Seoul'), INTERVAL 2 YEAR)
   GROUP BY report_date, mall, campaign_id
 ),
