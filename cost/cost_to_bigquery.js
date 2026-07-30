@@ -4,14 +4,17 @@
  * cloop-collab/RF_D2C · cost 폴더
  *
  * 통합리포트 자동입력의 마지막 EGNIS 의존(원가엔진)을 BQ 테이블로 대체.
- * 원가엔진 = cloop-dashboard-vercel/api/report.js 를 그대로 이식(옵션명 파싱·맛/개입/별칭·택배단가).
- *   ⚠ SOURCE OF TRUTH = api/report.js·index.html. 엔진 로직 변경 시 그쪽과 반드시 동기화.
+ * 옵션 파싱 엔진 = cloop-dashboard-vercel/api/report.js 이식(옵션명 파싱·맛/개입/별칭·택배단가).
+ *   ⚠ 옵션 파서(ov·sp 함수들)는 대시보드와 동기화 유지. 단 원가 소스는 여기(BQ)만 찐원가(유효기간 원장)로 전환됨
+ *     (2026-07-30, Stage2). 대시보드/report.js는 아직 weekly 사용 → 과거일자 cogs가 다를 수 있음(대시보드도 원장 전환 시 정합).
  *
  * 입력:
  *   (1) 일별·옵션별 판매 = cafe24.rf_cafe24_order_items_current
  *       (대시보드 bq_order_items 라우트와 동일 SQL: status_code NOT LIKE 'C%' 제외 = 취소/환불 반영,
  *        SUM(quantity)=순판매박스, 옵션명=raw_json.option_value)
- *   (2) 최신 원가 단가 = 구글시트 '최신원가 (weekly)'!A:G (D열=품목명, G열=단가)
+ *   (2) 시점별(유효기간) 원가 = BQ `mart.rf_cost_ledger` (effective_from=적용시작일, item_name=품목명, cost=단가)
+ *       판매일 as-of 조회(적용시작일<=판매일 중 최신). 판매일이 원장 최초일(2026-05-04)보다 이르면 최초 단가 폴백(floor).
+ *       item_name 포맷은 구 weekly D열과 동일 → 옵션 파서(parseCost/ovBoxCost) 그대로 재사용.
  * 출력: mart.mart_cost_daily(report_date, mall, cogs, ship) — 기간만 원자적 재적재(트랜잭션 DELETE+INSERT)
  *
  * 모드:
@@ -20,7 +23,6 @@
  */
 "use strict";
 const { BigQuery } = require("@google-cloud/bigquery");
-const { google } = require("googleapis");
 
 // ===== 설정 =====
 const GCP_PROJECT = process.env.BQ_PROJECT || "rf-ads-db-500505";
@@ -32,8 +34,7 @@ const LOOKBACK_DAYS = parseInt(process.env.LOOKBACK_DAYS || "3", 10);
 const MALLS = ["cloop", "sprint"];
 
 // ===== 원가 상수 (api/report.js와 동일) =====
-const OV_COST_SHEET_ID = "1sdYZEt9AEBLxpD4sE8E_5zKudqjfdwvij0S_HYgfxeE";
-const OV_COST_RANGE = "'최신원가 (weekly)'!A:G";
+const LEDGER_TABLE = "mart.rf_cost_ledger"; // 찐원가 유효기간 원장(effective_from·item_name·cost)
 const OV_SHIP = { 6: 2563, 12: 3237, 15: 3233, 20: 2905, 24: 3562 };
 const OV_ALIAS = { "사과": "오리지널", "헛개마카": "마카헛개", "샤인머스켓": "샤인머스캣", "샤머": "샤인머스캣", "화이트": "화이트발사믹" };
 const OV_OVERRIDE = [{ g: "오프아워", f: "라임브리즈", p: 328 }, { g: "오프아워", f: "피치릴렉서", p: 329 }, { g: "티카이브", f: "인진쑥차", p: 331 }, { g: "티카이브", f: "호박팥차", p: 355 }];
@@ -154,13 +155,29 @@ function addDaysStr(str, n) {
 }
 
 // ===== 데이터 소스 =====
-async function readCostSheet() {
-  const auth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"] });
-  const sheets = google.sheets({ version: "v4", auth: await auth.getClient() });
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: OV_COST_SHEET_ID, range: OV_COST_RANGE, valueRenderOption: "UNFORMATTED_VALUE",
-  });
-  return (res.data && res.data.values) || [];
+// 찐원가 원장 로드 → item_name별 시점 단가 인덱스(오름차순 정렬 [{ef, cost}])
+async function readCostLedger(bq) {
+  const sql = "SELECT CAST(effective_from AS STRING) AS ef, item_name, cost " +
+    "FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` " +
+    "WHERE item_name IS NOT NULL AND cost IS NOT NULL AND cost > 0";
+  const [rows] = await bq.query({ query: sql, location: BQ_LOCATION });
+  const idx = new Map();
+  rows.forEach(r => { const k = String(r.item_name); if (!idx.has(k)) idx.set(k, []); idx.get(k).push({ ef: String(r.ef), cost: +r.cost }); });
+  for (const arr of idx.values()) arr.sort((a, b) => a.ef < b.ef ? -1 : (a.ef > b.ef ? 1 : 0));
+  return idx;
+}
+// 판매일(dateStr) 시점 원가를 weekly 시트와 동일한 값배열 형태로 반환(parseCost 재사용).
+//   dateStr=null → 최신 스냅샷(전 품목, 제품군 목록 구축용). 판매일이 원장 최초일보다 이르면 floor(최초 단가).
+function sheetForDate(idx, dateStr) {
+  const out = [];
+  for (const [name, arr] of idx) {
+    if (!arr.length) continue;
+    let c = null;
+    if (dateStr == null) { c = arr[arr.length - 1].cost; }
+    else { for (const e of arr) { if (e.ef <= dateStr) c = e.cost; else break; } if (c == null) c = arr[0].cost; }
+    if (c != null && c > 0) out.push([null, null, null, name, null, null, c]);
+  }
+  return out;
 }
 async function optionRows(bq, start, end) {
   const sql =
@@ -177,19 +194,27 @@ async function optionRows(bq, start, end) {
 }
 
 // ===== 원가엔진 실행 → 일별·몰별 cogs/ship =====
-function computeDaily(orows, cost) {
-  const acc = {}; // key = date|mall → {cogs, ship}
+function computeDaily(orows, idx) {
+  // 판매일별로 그룹핑 → 각 날짜의 시점 원가(as-of)로 계산(찐원가 유효기간 반영)
+  const byDate = new Map();
   (orows || []).forEach(r => {
-    const pn = String(r.productName || ""), on = String(r.optionName || "");
-    const box = +r.saleCount || 0; if (box === 0) return; // 음수(취소/환불)도 포함해 차감(현재는 C% 제외라 양수)
-    const mall = String(r.mallId || "");
     const d = (r.date && r.date.value) ? String(r.date.value).slice(0, 10) : String(r.date || "").slice(0, 10);
-    const sp = mall === "sprint";
-    const bc = ovBoxCost(pn, on, cost, sp); if (bc == null) return; // 제품군 미인식 → 원가 미산입(정상 1~2%)
-    const rate = shipRateForCans(bc.cans, bc.pieces > 1, pn);
-    const k = d + "|" + mall; const b = acc[k] || (acc[k] = { date: d, mall, cogs: 0, ship: 0 });
-    b.cogs += box * bc.boxCost; b.ship += box * rate;
+    if (!byDate.has(d)) byDate.set(d, []); byDate.get(d).push(r);
   });
+  const acc = {}; // key = date|mall → {cogs, ship}
+  for (const [d, drows] of byDate) {
+    const cost = parseCost(sheetForDate(idx, d)); // 이 날짜 시점 OV_COST 반환 + 전역 SP_COST 설정
+    drows.forEach(r => {
+      const pn = String(r.productName || ""), on = String(r.optionName || "");
+      const box = +r.saleCount || 0; if (box === 0) return; // 음수(취소/환불)도 포함해 차감(현재는 C% 제외라 양수)
+      const mall = String(r.mallId || "");
+      const sp = mall === "sprint";
+      const bc = ovBoxCost(pn, on, cost, sp); if (bc == null) return; // 제품군 미인식 → 원가 미산입(정상 1~2%)
+      const rate = shipRateForCans(bc.cans, bc.pieces > 1, pn);
+      const k = d + "|" + mall; const b = acc[k] || (acc[k] = { date: d, mall, cogs: 0, ship: 0 });
+      b.cogs += box * bc.boxCost; b.ship += box * rate;
+    });
+  }
   return Object.values(acc).map(b => ({ report_date: b.date, mall: b.mall, cogs: Math.round(b.cogs), ship: Math.round(b.ship) }));
 }
 
@@ -218,14 +243,16 @@ async function main() {
   const end = yesterday;
   console.log(`[cost] 범위 ${start} ~ ${end} (${span}일, ${bi >= 0 ? "backfill" : "daily"})`);
 
-  const cost = parseCost(await readCostSheet());
-  ovGroups(cost);
-  console.log(`[cost] 원가시트 ${cost.length}행, 제품군 ${OV_GROUPS.length}종`);
+  const idx = await readCostLedger(bq);
+  ovGroups(parseCost(sheetForDate(idx, null))); // 전 품목에서 제품군 목록 구축
+  const efs = new Set(); for (const arr of idx.values()) for (const e of arr) efs.add(e.ef);
+  const efl = [...efs].sort();
+  console.log(`[cost] 찐원가 원장 품목 ${idx.size}종, 제품군 ${OV_GROUPS.length}종, 유효일 ${efs.size}개 (${efl[0]}~${efl[efl.length - 1]})`);
 
   const orows = await optionRows(bq, start, end);
   console.log(`[cost] order_items 옵션행 ${orows.length}`);
 
-  const rows = computeDaily(orows, cost);
+  const rows = computeDaily(orows, idx);
   const byMall = {}; rows.forEach(r => { byMall[r.mall] = (byMall[r.mall] || 0) + 1; });
   const totC = rows.reduce((a, r) => a + r.cogs, 0), totS = rows.reduce((a, r) => a + r.ship, 0);
   console.log(`[cost] 산출 ${rows.length}행 (${JSON.stringify(byMall)}) · cogs합 ${totC.toLocaleString()} · ship합 ${totS.toLocaleString()}`);
