@@ -2,14 +2,11 @@ name: Cafe24 to BigQuery Intraday (Today)
 
 on:
   # GitHub 스케줄러는 */15 같은 고빈도 cron을 스킵해 실제론 ~시간당만 발화함.
-  # → 안정적인 '매시간 트리거' + 잡 내부 15분 루프(아래 step)로 실질 15분 갱신 보장.
-  #   (RF_D2C는 public 레포라 러너 시간 무료 → 장시간 잡 비용 없음)
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch: {}
 
 # Daily/백필과 같은 그룹 → 카페24 토큰 회전 경합 방지(동시 실행 직렬화).
-# 진행중인 잡은 취소하지 않고 큐잉하되, 대기 중 잡이 쌓이면 최신 1개만 유지(15분 주기라 무방).
 concurrency:
   group: cafe24-token
   cancel-in-progress: false
@@ -29,22 +26,35 @@ jobs:
       CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
       CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
       CAFE24_SHOPS: '[{"shop_no":1,"mall":"cloop"},{"shop_no":2,"mall":"cloop"},{"shop_no":4,"mall":"sprint"}]'
-      # 당일 갱신은 통계 + 주문 + 매출귀속만 (마스터 스냅샷은 Daily에서만)
       CAFE24_TABLES: "sales_daily,product_sales,traffic,traffic_keyword,members,orders,order_attribution,ad_sales,adkeyword_sales,keyword_sales,domain_sales,ad_effect,sales_pervisitor"
     steps:
+      # 260811 수정: Daily(21:xx UTC = 06:xx KST)가 공유 cafe24-token 락에서 굶어 08-09부터
+      # base 14테이블이 동결됐다. 그 시간대엔 intraday를 건너뛰어 Daily가 방해 없이 돌게 한다.
+      - name: Daily-window guard (skip at 21:xx UTC = 06:xx KST)
+        id: guard
+        run: |
+          if [ "$(date -u +%H)" = "21" ]; then
+            echo "21:xx UTC = Daily window -> skip intraday this hour"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
       - uses: actions/setup-python@v5
+        if: steps.guard.outputs.skip != 'true'
         with:
           python-version: "3.12"
       - run: pip install -r cafe24/requirements.txt
+        if: steps.guard.outputs.skip != 'true'
       - name: 서비스계정 키 파일
+        if: steps.guard.outputs.skip != 'true'
         run: |
           cat > sa_key.json <<'KEY'
           ${{ secrets.GCP_SA_KEY }}
           KEY
-      # 매시간 트리거되어 잡 안에서 15분 간격 4회(≈:00/:15/:30/:45) 적재 → 실질 15분 실시간.
-      # 1회 실행 ~3분 + sleep 11분 = ~14분 주기, 4회 ~45분(60분 timeout 내). 한 주기 실패해도 다음 주기 계속.
       - name: 적재 (당일 · 15분 간격 4회)
+        if: steps.guard.outputs.skip != 'true'
         run: |
           for i in 0 1 2 3; do
             echo "===== cafe24 intraday cycle $i @ $(date -u '+%H:%M:%S') UTC ====="
