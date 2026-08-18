@@ -39,6 +39,8 @@ WORKSPACE = os.environ.get("SLACK_WORKSPACE", "egnisworkspace")
 LOOKBACK_DAYS = int(os.environ.get("SLACK_LOOKBACK_DAYS", "14"))
 ACK = os.environ.get("SLACK_ACK", "1") == "1"      # 적재한 요청에 ✅ + 스레드 답글
 BRANDS = ("클룹", "스프린트")          # 자사몰만
+H_PHONE, H_ID1, H_ID2 = "phone", "member_id_1", "member_id_2"
+H_NAME, H_SRC = "고객명", "출처"
 KEY = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
 SLACK_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 
@@ -161,7 +163,17 @@ def ack(p, note):
 
 
 def col(values, idx):
-    return values[idx] if len(values) > idx else ""
+    """1-based 열 번호로 값 읽기"""
+    return str(values[idx - 1]).strip() if len(values) >= idx else ""
+
+
+def a1(col_idx):
+    """1-based 열 번호 → A1 표기"""
+    s, n = "", col_idx
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
 
 
 def main():
@@ -170,13 +182,21 @@ def main():
     svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
     sheets = svc.spreadsheets()
 
-    rows = sheets.values().get(spreadsheetId=SHEET_ID, range=f"{TAB}!A:G",
+    rows = sheets.values().get(spreadsheetId=SHEET_ID, range=f"{TAB}!A:Z",
                                valueRenderOption="FORMATTED_VALUE").execute().get("values", [])
-    # E열 체크박스가 빈 행까지 깔려 있어 A열(reg) 기준으로 실제 마지막 행을 잡는다
+    head = rows[0] if rows else []
+
+    def find(name, fallback):
+        return head.index(name) + 1 if name in head else fallback
+    c_phone, c_id1 = find(H_PHONE, 2), find(H_ID1, 3)
+    c_id2 = find(H_ID2, c_id1 + 1)
+    c_name, c_src = find(H_NAME, 5), find(H_SRC, 6)
+
+    # 체크박스 열이 빈 행까지 깔려 있어 A열(reg) 기준으로 실제 마지막 행을 잡는다
     last = max((i for i, r in enumerate(rows, start=1) if r and str(r[0]).strip()), default=1)
     index = {}
     for i, r in enumerate(rows[1:last], start=2):
-        index.setdefault(digits(col(r, 1)), i)
+        index.setdefault(digits(col(r, c_phone)), i)
 
     parsed, skipped = [], []
     for msg in slack_history():
@@ -202,25 +222,29 @@ def main():
         if row:                                   # 기존 행: 빈 칸만 채움
             cur = rows[row - 1] if row - 1 < len(rows) else []
             patch = []
-            if p["ids"] and not col(cur, 2):
-                patch.append({"range": f"{TAB}!C{row}", "values": [[p["ids"][0]]]})
-            if len(p["ids"]) > 1 and not col(cur, 3):
-                patch.append({"range": f"{TAB}!D{row}", "values": [[p["ids"][1]]]})
-            if p["name"] and not col(cur, 5):
-                patch.append({"range": f"{TAB}!F{row}", "values": [[p["name"]]]})
-            if p["url"] and not col(cur, 6):
-                patch.append({"range": f"{TAB}!G{row}", "values": [[p["url"]]]})
+            if p["ids"] and not col(cur, c_id1):
+                patch.append({"range": f"{TAB}!{a1(c_id1)}{row}", "values": [[p["ids"][0]]]})
+            if len(p["ids"]) > 1 and not col(cur, c_id2):
+                patch.append({"range": f"{TAB}!{a1(c_id2)}{row}", "values": [[p["ids"][1]]]})
+            if p["name"] and not col(cur, c_name):
+                patch.append({"range": f"{TAB}!{a1(c_name)}{row}", "values": [[p["name"]]]})
+            if p["url"] and not col(cur, c_src):
+                patch.append({"range": f"{TAB}!{a1(c_src)}{row}", "values": [[p["url"]]]})
             if patch:
                 data += patch
                 filled += 1
                 acks.append((p, f"{row}행 보강(아이디·고객명)"))
         else:                                     # 신규 행
             last += 1
-            data.append({"range": f"{TAB}!A{last}:D{last}", "values": [[
-                p["reg"], hyphenate(p["phone"]),
-                p["ids"][0] if p["ids"] else "",
-                p["ids"][1] if len(p["ids"]) > 1 else ""]]})
-            data.append({"range": f"{TAB}!F{last}:G{last}", "values": [[p["name"], p["url"]]]})
+            data.append({"range": f"{TAB}!A{last}", "values": [[p["reg"]]]})
+            data.append({"range": f"{TAB}!{a1(c_phone)}{last}",
+                         "values": [[hyphenate(p["phone"])]]})
+            if p["ids"]:
+                data.append({"range": f"{TAB}!{a1(c_id1)}{last}", "values": [[p["ids"][0]]]})
+            if len(p["ids"]) > 1:
+                data.append({"range": f"{TAB}!{a1(c_id2)}{last}", "values": [[p["ids"][1]]]})
+            data.append({"range": f"{TAB}!{a1(c_name)}{last}", "values": [[p["name"]]]})
+            data.append({"range": f"{TAB}!{a1(c_src)}{last}", "values": [[p["url"]]]})
             index[p["phone"]] = last
             added += 1
             acks.append((p, f"{last}행 추가"
