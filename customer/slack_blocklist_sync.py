@@ -13,8 +13,12 @@
 
 이미 있는 번호는 행을 추가하지 않고 빈 칸만 채운다(멱등).
 
-필수 환경변수: SLACK_BOT_TOKEN(channels:history), GOOGLE_APPLICATION_CREDENTIALS(SA키)
-선택: BLOCKLIST_SHEET_ID, SLACK_CHANNEL_ID, SLACK_LOOKBACK_DAYS
+적재한 요청에는 ✅ 리액션과 스레드 답글을 남긴다(SLACK_ACK=0 으로 끌 수 있음).
+⚠ '차단 완료' 버튼은 누를 수 없다 — Slack 블록 버튼은 그 버튼을 소유한 앱에만 이벤트가 간다.
+
+필수 환경변수: SLACK_BOT_TOKEN(channels:history + chat:write + reactions:write),
+              GOOGLE_APPLICATION_CREDENTIALS(SA키)
+선택: BLOCKLIST_SHEET_ID, SLACK_CHANNEL_ID, SLACK_LOOKBACK_DAYS, SLACK_ACK
 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '편집자' 공유
 """
 import os
@@ -33,6 +37,7 @@ TAB = os.environ.get("BLOCKLIST_TAB", "BLOCKLIST")
 CHANNEL = os.environ.get("SLACK_CHANNEL_ID", "C04FPV7D8BZ")
 WORKSPACE = os.environ.get("SLACK_WORKSPACE", "egnisworkspace")
 LOOKBACK_DAYS = int(os.environ.get("SLACK_LOOKBACK_DAYS", "14"))
+ACK = os.environ.get("SLACK_ACK", "1") == "1"      # 적재한 요청에 ✅ + 스레드 답글
 BRANDS = ("클룹", "스프린트")          # 자사몰만
 KEY = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
 SLACK_TOKEN = os.environ["SLACK_BOT_TOKEN"]
@@ -120,8 +125,39 @@ def parse(msg):
         "ids_dropped": ids[2:],          # 시트 열이 2개라 3번째부터는 못 넣는다
         "name": (nm.group(1).strip().strip("`*") if nm else ""),
         "reg": when,
+        "ts": ts,
         "url": f"https://{WORKSPACE}.slack.com/archives/{CHANNEL}/p{ts.replace('.', '')}" if ts else "",
     }
+
+
+def slack_post(method, payload):
+    """Slack Web API POST. 실패해도 적재 결과를 깨지 않도록 오류만 반환한다."""
+    req = urllib.request.Request(
+        "https://slack.com/api/" + method,
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": "Bearer " + SLACK_TOKEN,
+                 "Content-Type": "application/json; charset=utf-8"})
+    try:
+        res = json.load(urllib.request.urlopen(req))
+    except Exception as e:                      # noqa: BLE001
+        return str(e)
+    return None if res.get("ok") else res.get("error")
+
+
+def ack(p, note):
+    """적재 완료 표시: ✅ 리액션 + 스레드 답글.
+    ⚠ '차단 완료' 버튼 자체는 누를 수 없다(그 버튼을 소유한 앱만 처리 가능).
+       버튼 클릭이 프로세스상 필요하면 사람이 누르거나, 워크플로 소유자가 스텝을 손봐야 한다."""
+    if not p["ts"]:
+        return
+    err = slack_post("reactions.add", {"channel": CHANNEL, "timestamp": p["ts"],
+                                       "name": "white_check_mark"})
+    if err and err != "already_reacted":
+        print(f"  리액션 실패({p['phone']}): {err}")
+    err = slack_post("chat.postMessage", {"channel": CHANNEL, "thread_ts": p["ts"],
+                                          "text": f"수신거부 시트 {note} :white_check_mark:"})
+    if err:
+        print(f"  스레드 답글 실패({p['phone']}): {err}")
 
 
 def col(values, idx):
@@ -160,6 +196,7 @@ def main():
         uniq.append(p)
 
     data, added, filled = [], 0, 0
+    acks = []
     for p in uniq:
         row = index.get(p["phone"])
         if row:                                   # 기존 행: 빈 칸만 채움
@@ -176,6 +213,7 @@ def main():
             if patch:
                 data += patch
                 filled += 1
+                acks.append((p, f"{row}행 보강(아이디·고객명)"))
         else:                                     # 신규 행
             last += 1
             data.append({"range": f"{TAB}!A{last}:D{last}", "values": [[
@@ -185,10 +223,16 @@ def main():
             data.append({"range": f"{TAB}!F{last}:G{last}", "values": [[p["name"], p["url"]]]})
             index[p["phone"]] = last
             added += 1
+            acks.append((p, f"{last}행 추가"
+                            + (f" / 아이디 {', '.join(p['ids'])}" if p["ids"] else " / 아이디 없음")))
 
     if data:
         sheets.values().batchUpdate(spreadsheetId=SHEET_ID, body={
             "valueInputOption": "RAW", "data": data}).execute()
+
+    if ACK:
+        for p, note in acks:
+            ack(p, note)
 
     print(f"슬랙 차단요청 {len(parsed)}건(자사몰) 처리 → 신규 {added}행, 기존 보강 {filled}행")
     over = [(p["phone"], p["ids_dropped"]) for p in uniq if p["ids_dropped"]]

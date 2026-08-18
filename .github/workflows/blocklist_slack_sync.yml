@@ -2,7 +2,7 @@ name: 수신거부(BLOCKLIST) 슬랙 요청 적재
 
 # 슬랙 #1_crm_cx 의 CRM 차단 요청 → BLOCKLIST 시트(클룹·스프린트만). 30분마다 + 수동 실행.
 # 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '편집자' 공유.
-#       secrets.SLACK_BOT_TOKEN 에 channels:history 권한 토큰 등록(#1_crm_cx 초대 필요).
+#       secrets.SLACK_BOT_TOKEN 에 channels:history + chat:write + reactions:write 토큰 등록(#1_crm_cx 초대 필요).
 
 on:
   schedule:
