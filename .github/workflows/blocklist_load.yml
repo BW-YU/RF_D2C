@@ -1,7 +1,7 @@
 name: 수신거부(BLOCKLIST) 시트 적재
 
-# 수신거부 구글시트 → cafe24.blocklist. 매일 갱신 + 수동 실행.
-# 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '뷰어' 공유.
+# 수신거부 구글시트 → cafe24.blocklist 적재 후, 시트 C열에 member_id 되쓰기. 매일 갱신 + 수동 실행.
+# 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '편집자' 공유(되쓰기 때문에 뷰어로는 부족).
 
 on:
   schedule:
@@ -29,5 +29,7 @@ jobs:
           KEY
       - name: 적재
         run: python customer/load_blocklist.py
+      - name: member_id 되쓰기
+        run: python customer/blocklist_member_id_writeback.py
       - if: always()
         run: rm -f sa_key.json
