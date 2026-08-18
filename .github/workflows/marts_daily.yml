@@ -2,6 +2,10 @@ name: Marts Refresh Daily
 
 on:
   schedule:
+    # 04:30 KST 0차 (260819 신설). 대시보드 첫 회차 05:00보다 앞서 `mart.ad_unified_daily`를
+    # 만들어야 한다 — 그 테이블이 없으면 화면의 어제 광고비가 0이 된다.
+    # ⚠️ **meta_daily 03:30 뒤에** 와야 한다. 순서가 뒤집히면 옛 원본으로 mart를 만든다.
+    - cron: "30 19 * * *"  # 04:30 KST (0차)
     - cron: "0 23 * * *"   # 매일 08:00 KST (= 23:00 UTC), 매체·카페24 원본 적재 이후
   workflow_dispatch: {}
 
