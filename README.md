@@ -1,2 +1,12 @@
-# Meta → BigQuery 적재 (스프린트/클룹)
-내부용 광고 RAW 적재 파이프라인. 비밀값은 GitHub Secrets(GCP_SA_KEY, META_ACCESS_TOKEN, AD_ACCOUNT_IDS)로 관리.
+# 광고·자사몰 → BigQuery 적재
+
+내부용 데이터 수집·mart 파이프라인. 비밀값은 GitHub Secrets로 관리한다.
+
+## Google Ads
+
+- 수집기: `google_ads/google_ads_to_bigquery.py`
+- 자동 실행: `.github/workflows/google_ads_hourly.yml` 매시 20분
+- 범위: 공식 Google Ads API 읽기 전용, 기본 최근 3일(오늘 포함)
+- 적재: `google_ads_raw.rf_google_campaign_daily_cloop` 날짜 파티션을 덮어쓴 뒤
+  같은 구간의 Google 행만 `mart.ad_unified_daily`에 원자적으로 반영한다.
+- DTS는 확정 백필 경로로 계속 유지한다. API 수집은 D-1·당일 공백을 메우며 광고 설정은 변경하지 않는다.

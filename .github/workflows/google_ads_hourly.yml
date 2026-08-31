@@ -1,0 +1,47 @@
+name: Google Ads to BigQuery Hourly
+
+on:
+  schedule:
+    # 매시 20분. 06:20 KST 회차가 07:10 marts·07:30 데일리 대시보드보다 먼저 D-1을 채운다.
+    - cron: "20 * * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "오늘 포함 재수집 일수"
+        required: false
+        default: "3"
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
+      GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+      GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+      GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+      GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+      GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+      GOOGLE_ADS_CUSTOMER_IDS: "2580015098:cloop"
+      LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
+      BQ_PROJECT: rf-ads-db-500505
+      BQ_DATASET: google_ads_raw
+      BQ_LOCATION: asia-northeast3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r google_ads/requirements.txt
+      - name: 서비스계정 키 파일
+        run: |
+          cat > sa_key.json <<'KEY'
+          ${{ secrets.GCP_SA_KEY }}
+          KEY
+      - name: Google Ads API → BQ 원장 → 통합 mart
+        run: python google_ads/google_ads_to_bigquery.py
+      - if: always()
+        run: rm -f sa_key.json
