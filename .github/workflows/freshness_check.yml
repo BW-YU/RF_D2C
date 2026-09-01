@@ -25,8 +25,10 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: sa_key.json
           BQ_PROJECT: rf-ads-db-500505
           BQ_LOCATION: asia-northeast3
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 선택: 있으면 슬랙 알림
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          # Mac mini 07:00 orchestrator가 호출한 수동 실행만 Slack 전송.
+          # 10:00 schedule은 GitHub 상태·이메일만 남겨 같은 incident 중복 게시를 막는다.
+          SLACK_WEBHOOK_URL: ${{ github.event_name == 'workflow_dispatch' && secrets.SLACK_WEBHOOK_URL || '' }}
+          SLACK_BOT_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.SLACK_BOT_TOKEN || '' }}
           SLACK_CHANNEL_ID: C0BF7RA2F8W
           SLACK_MENTION_ID: U03TZ6G38N6
         run: python monitoring/freshness_check.py
