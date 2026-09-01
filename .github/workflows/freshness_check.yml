@@ -26,6 +26,9 @@ jobs:
           BQ_PROJECT: rf-ads-db-500505
           BQ_LOCATION: asia-northeast3
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 선택: 있으면 슬랙 알림
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: C0BF7RA2F8W
+          SLACK_MENTION_ID: U03TZ6G38N6
         run: python monitoring/freshness_check.py
       - if: always()
         run: rm -f sa_key.json

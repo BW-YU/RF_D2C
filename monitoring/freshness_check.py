@@ -19,6 +19,9 @@ from google.cloud import bigquery
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID", "").strip()
+SLACK_MENTION_ID = os.environ.get("SLACK_MENTION_ID", "").strip()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("freshness_check")
@@ -101,11 +104,27 @@ def check_ga4_quality(client):
 
 
 def notify_slack(text):
-    if not SLACK_WEBHOOK_URL:
+    mention = f"<@{SLACK_MENTION_ID}> " if SLACK_MENTION_ID else ""
+    text = mention + text
+    if not SLACK_WEBHOOK_URL and not (SLACK_BOT_TOKEN and SLACK_CHANNEL_ID):
+        log.warning("Slack 자격증명 없음: 알림 미전송")
         return
     try:
         import requests
-        requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=15)
+        if SLACK_WEBHOOK_URL:
+            response = requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=15)
+            response.raise_for_status()
+            return
+        response = requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"channel": SLACK_CHANNEL_ID, "text": text},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("ok") is not True:
+            raise RuntimeError(payload.get("error", "unknown Slack API error"))
     except Exception as e:  # noqa: BLE001
         log.warning("슬랙 전송 실패: %s", str(e)[:120])
 
