@@ -2,13 +2,18 @@ name: GA4 to BigQuery Daily
 
 on:
   schedule:
-    - cron: '0 20 * * *'   # 매일 05:00 KST
+    # GitHub cron은 정시 SLA가 아니므로 하루 4회 재확인한다 (05:00/07:00/11:00/16:00 KST).
+    - cron: '0 2,7,20,22 * * *'
   workflow_dispatch:
     inputs:
       backfill_days:
-        description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 7일)."
+        description: "과거 N일 1회 백필 (예: 365=1년). 비워두면 일상 모드(최근 8일)."
         required: false
         default: ""
+
+concurrency:
+  group: ga4-daily
+  cancel-in-progress: false
 
 jobs:
   daily:
@@ -19,7 +24,7 @@ jobs:
       BQ_DATASET: rf_ga4
       BQ_TABLE: rf_ga4
       BQ_LOCATION: asia-northeast3
-      LOOKBACK_DAYS: "7"
+      LOOKBACK_DAYS: "8"
       BACKFILL_DAYS: ${{ github.event.inputs.backfill_days }}
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +39,5 @@ jobs:
         run: python ga4/ga4_to_bigquery.py --mode daily
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+      - if: always()
+        run: rm -f /tmp/sa.json

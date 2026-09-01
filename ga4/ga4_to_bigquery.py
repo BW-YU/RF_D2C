@@ -4,12 +4,14 @@ GA4 -> BigQuery 적재 (cloop-collab/RF_D2C · ga4 폴더)
 네이버(naver/naver_to_bigquery.py)와 동일한 방식: 환경변수 기반 + daily에 백필 통합.
 
 프로젝트 rf-ads-db-500505 · 데이터셋 rf_ga4 (asia-northeast3)
-  - rf_ga4      : 일별·확정 (cloop + sprint 합침)
+  - rf_ga4      : 일별 API 스냅샷 (cloop + sprint 합침)
   - rf_ga4_d0   : 당일 (cloop + sprint 합침)
+  - rf_ga4_quality_daily : 속성×일자별 provisional/partial/confirmed 상태
+  - rf_ga4_load_audit    : 매 실행 품질 상태 이력
 
 모드:
   python ga4/ga4_to_bigquery.py --mode daily
-     · 평소: 최근 LOOKBACK_DAYS(기본 7)일 재적재 (지연 반영분 보정) + KEEP_DAYS 초과분 정리
+     · 평소: 최근 LOOKBACK_DAYS(기본 8)일 재적재 (지연 반영분 보정) + KEEP_DAYS 초과분 정리
      · BACKFILL_DAYS>0 로 실행 시: 과거 N일 1회 백필 (rf_ga4 전체 교체)
   python ga4/ga4_to_bigquery.py --mode d0
      · 당일 데이터로 rf_ga4_d0 교체 (시간당)
@@ -22,8 +24,11 @@ UTM 매핑:
 """
 
 import argparse
+import collections
 import os
 import datetime as dt
+import statistics
+import uuid
 from zoneinfo import ZoneInfo
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -33,15 +38,18 @@ from google.analytics.data_v1beta.types import (
     Metric,
     RunReportRequest,
 )
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 # ========== 설정 (환경변수로 덮어쓰기 가능) ==========
 GCP_PROJECT = os.environ.get("BQ_PROJECT", "rf-ads-db-500505")
 BQ_DATASET = os.environ.get("BQ_DATASET", "rf_ga4")
 BQ_LOCATION = os.environ.get("BQ_LOCATION", "asia-northeast3")
-TABLE_DAILY = os.environ.get("BQ_TABLE", "rf_ga4")        # 일별·확정
+TABLE_DAILY = os.environ.get("BQ_TABLE", "rf_ga4")        # 일별 API 스냅샷
 TABLE_D0 = os.environ.get("BQ_TABLE_D0", "rf_ga4_d0")     # 시간당·당일
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS") or "7")
+TABLE_QUALITY = os.environ.get("BQ_QUALITY_TABLE", "rf_ga4_quality_daily")
+TABLE_AUDIT = os.environ.get("BQ_AUDIT_TABLE", "rf_ga4_load_audit")
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS") or "8")
 BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or "0")
 KEEP_DAYS = int(os.environ.get("KEEP_DAYS") or "365")
 KST = ZoneInfo("Asia/Seoul")
@@ -126,6 +134,89 @@ def bq_schema():
     return fields
 
 
+def quality_schema():
+    return [
+        bigquery.SchemaField("brand", "STRING"),
+        bigquery.SchemaField("property_id", "STRING"),
+        bigquery.SchemaField("date", "DATE"),
+        bigquery.SchemaField("data_status", "STRING"),
+        bigquery.SchemaField("native_table_type", "STRING"),
+        bigquery.SchemaField("api_sessions", "INTEGER"),
+        bigquery.SchemaField("api_purchases", "INTEGER"),
+        bigquery.SchemaField("api_add_to_carts", "INTEGER"),
+        bigquery.SchemaField("api_checkouts", "INTEGER"),
+        bigquery.SchemaField("prior_7d_median_sessions", "FLOAT"),
+        bigquery.SchemaField("session_ratio", "FLOAT"),
+        bigquery.SchemaField("loaded_at", "TIMESTAMP"),
+        bigquery.SchemaField("run_id", "STRING"),
+    ]
+
+
+def native_export_state(bq, property_id, date_value):
+    """GA4 native export에서 해당 일자의 final/intraday 존재 상태를 판정한다."""
+    suffix = str(date_value).replace("-", "")
+    dataset = f"analytics_{property_id}"
+    daily = f"{GCP_PROJECT}.{dataset}.events_{suffix}"
+    intraday = f"{GCP_PROJECT}.{dataset}.events_intraday_{suffix}"
+    try:
+        bq.get_table(daily)
+        return "confirmed", "daily"
+    except NotFound:
+        pass
+    try:
+        bq.get_table(intraday)
+        return "provisional", "intraday"
+    except NotFound:
+        pass
+    return "missing", "missing"
+
+
+def build_quality_rows(bq, api_rows, start_date, end_date, run_id, loaded_at=None):
+    """API 집계와 native export final 존재 여부를 결합해 일×속성 품질 상태를 만든다."""
+    loaded_at = loaded_at or dt.datetime.now(dt.timezone.utc).isoformat()
+    agg = collections.defaultdict(lambda: collections.Counter())
+    for row in api_rows:
+        key = (row["brand"], row["property_id"], row["date"])
+        for field in ("sessions", "ecommerce_purchases", "add_to_carts", "checkouts"):
+            agg[key][field] += row.get(field, 0) or 0
+
+    start = dt.date.fromisoformat(start_date)
+    end = dt.date.fromisoformat(end_date)
+    result = []
+    for property_id, brand in PROPERTIES.items():
+        history = []
+        day = start
+        while day <= end:
+            date_value = day.isoformat()
+            values = agg.get((brand, property_id, date_value), collections.Counter())
+            sessions = int(values.get("sessions", 0))
+            median = float(statistics.median(history[-7:])) if history else 0.0
+            ratio = sessions / median if median else None
+            export_status, native_type = native_export_state(bq, property_id, date_value)
+            status = export_status
+            if export_status == "provisional" and ratio is not None and ratio < 0.5:
+                status = "partial"
+            result.append({
+                "brand": brand,
+                "property_id": property_id,
+                "date": date_value,
+                "data_status": status,
+                "native_table_type": native_type,
+                "api_sessions": sessions,
+                "api_purchases": int(values.get("ecommerce_purchases", 0)),
+                "api_add_to_carts": int(values.get("add_to_carts", 0)),
+                "api_checkouts": int(values.get("checkouts", 0)),
+                "prior_7d_median_sessions": median or None,
+                "session_ratio": ratio,
+                "loaded_at": loaded_at,
+                "run_id": run_id,
+            })
+            if sessions:
+                history.append(sessions)
+            day += dt.timedelta(days=1)
+    return result
+
+
 def fetch_property(client, property_id, brand, start_date, end_date):
     rows = []
     offset = 0
@@ -178,12 +269,12 @@ def ensure_dataset(bq):
     bq.create_dataset(ds, exists_ok=True)
 
 
-def ensure_table(bq, table_id):
+def ensure_table(bq, table_id, schema=None):
     full = f"{GCP_PROJECT}.{BQ_DATASET}.{table_id}"
     try:
         bq.get_table(full)
-    except Exception:
-        table = bigquery.Table(full, schema=bq_schema())
+    except NotFound:
+        table = bigquery.Table(full, schema=schema or bq_schema())
         table.time_partitioning = bigquery.TimePartitioning(field="date")
         bq.create_table(table)
         print(f"  * 테이블 생성: {full}")
@@ -202,19 +293,44 @@ def load_replace(bq, table_id, rows):
 
 
 def load_merge_range(bq, table_id, rows, start, end):
-    """[start, end] 구간만 지우고 다시 넣기 + KEEP_DAYS 초과분 정리. (신규 컬럼 자동 추가 허용)"""
+    """스테이징 적재 후 트랜잭션으로 [start, end]를 원자 교체한다."""
     full = ensure_table(bq, table_id)
-    bq.query(f"DELETE FROM `{full}` WHERE date BETWEEN '{start}' AND '{end}'").result()
-    if rows:
-        job_config = bigquery.LoadJobConfig(
-            schema=bq_schema(),
-            write_disposition="WRITE_APPEND",
-            schema_update_options=["ALLOW_FIELD_ADDITION"],
-        )
-        bq.load_table_from_json(rows, full, job_config=job_config).result()
+    staging = f"{full}__staging_{uuid.uuid4().hex[:10]}"
+    job_config = bigquery.LoadJobConfig(schema=bq_schema(), write_disposition="WRITE_TRUNCATE")
+    bq.load_table_from_json(rows, staging, job_config=job_config).result()
     cutoff = (dt.datetime.now(KST).date() - dt.timedelta(days=KEEP_DAYS)).isoformat()
-    bq.query(f"DELETE FROM `{full}` WHERE date < '{cutoff}'").result()
+    try:
+        bq.query(f"""
+        BEGIN TRANSACTION;
+        DELETE FROM `{full}` WHERE date BETWEEN '{start}' AND '{end}';
+        INSERT INTO `{full}` SELECT * FROM `{staging}`;
+        DELETE FROM `{full}` WHERE date < '{cutoff}';
+        COMMIT TRANSACTION;
+        """).result()
+    finally:
+        bq.delete_table(staging, not_found_ok=True)
     print(f"[{table_id}] {start}~{end} 갱신 ({len(rows)} rows), {cutoff} 이전 정리")
+
+
+def load_quality(bq, rows, start, end):
+    current = ensure_table(bq, TABLE_QUALITY, quality_schema())
+    audit = ensure_table(bq, TABLE_AUDIT, quality_schema())
+    stage = f"{current}__staging_{uuid.uuid4().hex[:10]}"
+    config = bigquery.LoadJobConfig(schema=quality_schema(), write_disposition="WRITE_TRUNCATE")
+    bq.load_table_from_json(rows, stage, job_config=config).result()
+    try:
+        bq.query(f"""
+        BEGIN TRANSACTION;
+        DELETE FROM `{current}` WHERE date BETWEEN '{start}' AND '{end}';
+        INSERT INTO `{current}` SELECT * FROM `{stage}`;
+        COMMIT TRANSACTION;
+        """).result()
+        append = bigquery.LoadJobConfig(schema=quality_schema(), write_disposition="WRITE_APPEND")
+        bq.load_table_from_json(rows, audit, job_config=append).result()
+    finally:
+        bq.delete_table(stage, not_found_ok=True)
+    counts = collections.Counter(row["data_status"] for row in rows)
+    print(f"[{TABLE_QUALITY}] 품질 상태: {dict(sorted(counts.items()))}")
 
 
 def main():
@@ -237,7 +353,11 @@ def main():
             start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
             end = yesterday.isoformat()
             print(f"[daily/lookback {LOOKBACK_DAYS}d] {start} ~ {end}")
-            load_merge_range(bq, TABLE_DAILY, fetch_all(start, end), start, end)
+            run_id = uuid.uuid4().hex
+            rows = fetch_all(start, end)
+            quality = build_quality_rows(bq, rows, start, end, run_id)
+            load_merge_range(bq, TABLE_DAILY, rows, start, end)
+            load_quality(bq, quality, start, end)
     elif args.mode == "d0":
         d = today.isoformat()
         print(f"[d0] {d}")
