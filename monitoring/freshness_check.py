@@ -23,6 +23,13 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID", "").strip()
 SLACK_MENTION_ID = os.environ.get("SLACK_MENTION_ID", "").strip()
 
+# GA4는 D-1이 하루 중 여러 차례 롤링 재적재된다. "partial"은 native intraday만 있고
+# 아직 daily(final) 테이블로 교체되기 전 상태 — 정오~오후 체크 시각에 흔히 걸리는
+# 정상 과도기라 STALE(실패)이 아니라 WARN으로만 남긴다. "confirmed"인데도
+# session_ratio가 이 임계치 밑이면 그건 과도기가 아니라 진짜 수집 결손이라 STALE로 본다.
+# 임계치는 ga4/ga4_to_bigquery.py의 provisional→partial 판정 기준(0.5)과 맞춘다.
+GA4_CONFIRMED_RATIO_STALE_THRESHOLD = 0.5
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("freshness_check")
 
@@ -64,21 +71,32 @@ def summarize_ga4_quality(rows):
     if missing_brands:
         return False, False, "품질행 없음: " + ", ".join(missing_brands)
 
-    bad = [b for b in sorted(expected)
-           if by_brand[b]["data_status"] in {"partial", "missing"}]
-    if bad:
-        parts = []
-        for brand in bad:
-            row = by_brand[brand]
-            ratio = row.get("session_ratio")
-            ratio_text = f", 직전중위 대비 {ratio:.0%}" if ratio is not None else ""
-            parts.append(f"{brand}={row['data_status']}({row.get('api_sessions', 0):,} 세션{ratio_text})")
-        return False, False, "; ".join(parts)
+    def fmt(brand):
+        row = by_brand[brand]
+        ratio = row.get("session_ratio")
+        ratio_text = f", 직전중위 대비 {ratio:.0%}" if ratio is not None else ""
+        return f"{brand}={row['data_status']}({row.get('api_sessions', 0):,} 세션{ratio_text})"
 
-    provisional = [b for b in sorted(expected)
-                   if by_brand[b]["data_status"] == "provisional"]
-    if provisional:
-        return True, True, "native final 대기: " + ", ".join(provisional)
+    # "missing" = native export 자체가 없음(intraday도 daily도 없음) — 실제 결손, STALE.
+    # confirmed인데 session_ratio가 임계치 밑이면 final 테이블은 있어도 세션 자체가
+    # 비정상으로 적으므로 STALE. 그 외(예: confirmed·ratio 정상)는 STALE 아님.
+    missing = [b for b in sorted(expected) if by_brand[b]["data_status"] == "missing"]
+    stale_confirmed = [
+        b for b in sorted(expected)
+        if by_brand[b]["data_status"] == "confirmed"
+        and by_brand[b].get("session_ratio") is not None
+        and by_brand[b]["session_ratio"] < GA4_CONFIRMED_RATIO_STALE_THRESHOLD
+    ]
+    bad = missing + stale_confirmed
+    if bad:
+        return False, False, "; ".join(fmt(b) for b in sorted(bad))
+
+    # "partial" = native intraday만 있고 daily(final)로 아직 안 바뀐 롤링 재적재 과도기.
+    # 오탐 방지를 위해 STALE이 아니라 WARN으로만 남긴다(260906).
+    pending = [b for b in sorted(expected)
+               if by_brand[b]["data_status"] in {"partial", "provisional"}]
+    if pending:
+        return True, True, "native final 대기: " + ", ".join(pending)
     if all(by_brand[b]["data_status"] == "confirmed" for b in expected):
         return True, False, "cloop+sprint native final 확인"
     unknown = ", ".join(f"{b}={by_brand[b]['data_status']}" for b in sorted(expected))
