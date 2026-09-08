@@ -1,6 +1,8 @@
 import unittest
 
-from freshness_check import summarize_ga4_quality
+import datetime
+
+from freshness_check import summarize_ga4_quality, apply_ack, load_acks
 
 
 def row(brand, status, sessions=100, ratio=1.0):
@@ -62,6 +64,38 @@ class Ga4FreshnessSummaryTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertFalse(warning)
         self.assertIn("sprint", detail)
+
+
+
+class AckTests(unittest.TestCase):
+    def _stale(self):
+        return dict(label="카카오모먼트", table="kakao_moment.rf_kakao_campaign", ok=False,
+                    detail="최신 2026-08-31 (지연 8일 / 허용 3일)")
+
+    def test_ack_within_deadline_becomes_warning(self):
+        acks = {"카카오모먼트": ("2026-09-21", "Kakao API 403")}
+        r = apply_ack(self._stale(), acks, datetime.date(2026, 9, 8))
+        self.assertTrue(r["ok"]); self.assertTrue(r["warning"])
+        self.assertIn("인지된 장애", r["detail"])
+
+    def test_ack_after_deadline_stays_stale(self):
+        acks = {"카카오모먼트": ("2026-09-21", "Kakao API 403")}
+        r = apply_ack(self._stale(), acks, datetime.date(2026, 9, 22))
+        self.assertFalse(r["ok"]); self.assertNotIn("warning", r)
+
+    def test_unacked_label_untouched(self):
+        r = apply_ack(dict(self._stale(), label="메타 광고"), {"카카오모먼트": ("2026-09-21", "x")}, datetime.date(2026, 9, 8))
+        self.assertFalse(r["ok"])
+
+    def test_ok_result_untouched(self):
+        r = apply_ack(dict(self._stale(), ok=True), {"카카오모먼트": ("2026-09-21", "x")}, datetime.date(2026, 9, 8))
+        self.assertTrue(r["ok"]); self.assertNotIn("warning", r)
+
+    def test_env_override_parses_and_ignores_bad(self):
+        acks = load_acks("네이버 SA=2026-10-01:점검;깨진항목;메타 광고=notadate")
+        self.assertEqual(acks["네이버 SA"], ("2026-10-01", "점검"))
+        self.assertNotIn("메타 광고", acks)
+        self.assertIn("카카오모먼트", acks)
 
 
 if __name__ == "__main__":
