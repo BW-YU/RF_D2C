@@ -12,6 +12,8 @@ freshness_check.py
 """
 import os
 import sys
+import datetime
+import re
 import logging
 
 from google.cloud import bigquery
@@ -44,6 +46,47 @@ CHECKS = [
     ("구글 광고(DTS)",       "google_ads_raw.p_ads_CampaignBasicStats_3030273599", "segments_date", 3),
     ("카카오모먼트",         "kakao_moment.rf_kakao_campaign",     "date",         3),
 ]
+
+
+# 인지된 장애(사람이 고쳐야 하는 것) — 기한까지는 STALE(실패·이메일) 대신 WARN으로만 남긴다.
+# 매 회차 같은 실패 메일을 받는 것은 감시가 아니라 소음이다. 기한이 지나면 자동으로 다시 STALE.
+#   {표시이름: ("YYYY-MM-DD", "사유")}. 환경변수 FRESHNESS_ACK="라벨=YYYY-MM-DD:사유;라벨2=..." 로 덧씌울 수 있다.
+ACKNOWLEDGED = {
+    # 260901~ Kakao Moment API 403 — 정적 KAKAO_ACCESS_TOKEN 실효/권한 회수 추정. 재인증은 카카오 개발자센터에서 사람이.
+    # 런북: Egnis_RF/20_Growth_DTC/30_Knowledge/Performance_MKT/data_infra/260906_카카오모먼트_적재403_진단_및_재인증런북.md
+    "카카오모먼트": ("2026-09-21", "Kakao API 403, 재인증 대기"),
+}
+
+
+def load_acks(env_value=None):
+    """ACKNOWLEDGED + 환경변수 덧씌우기. 형식 오류 항목은 무시한다."""
+    acks = dict(ACKNOWLEDGED)
+    raw = env_value if env_value is not None else os.environ.get("FRESHNESS_ACK", "")
+    for item in filter(None, (x.strip() for x in raw.split(";"))):
+        if "=" not in item:
+            continue
+        label, rest = item.split("=", 1)
+        until, _, reason = rest.partition(":")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", until.strip()):
+            acks[label.strip()] = (until.strip(), reason.strip() or "인지된 장애")
+    return acks
+
+
+def apply_ack(result, acks, today):
+    """STALE 결과가 기한 내 인지된 장애면 WARN으로 낮춘다. 기한이 지나면 그대로 STALE."""
+    if result["ok"]:
+        return result
+    ack = acks.get(result["label"])
+    if not ack:
+        return result
+    until, reason = ack
+    if today.isoformat() > until:
+        return result
+    out = dict(result)
+    out["ok"] = True
+    out["warning"] = True
+    out["detail"] = f"[인지된 장애, {until}까지 경고만: {reason}] " + result["detail"]
+    return out
 
 
 def check_one(client, label, table, date_col, max_days):
@@ -149,7 +192,9 @@ def notify_slack(text):
 
 def main():
     client = bigquery.Client(project=BQ_PROJECT, location=BQ_LOCATION)
-    results = [check_one(client, *c) for c in CHECKS]
+    acks = load_acks()
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date()
+    results = [apply_ack(check_one(client, *c), acks, today) for c in CHECKS]
     results.append(check_ga4_quality(client))
     stale = [r for r in results if not r["ok"]]
     warnings = [r for r in results if r.get("warning")]
