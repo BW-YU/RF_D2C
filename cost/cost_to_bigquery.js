@@ -219,6 +219,22 @@ function computeDaily(orows, idx) {
 }
 
 // ===== 적재 (기간만 원자적 재적재) =====
+// 같은 테이블을 동시에 쓰는 다른 잡(체이닝·cron·수동 실행이 겹칠 때)이 있으면 BQ가
+// "Transaction is aborted due to concurrent update" 로 한쪽을 중단시킨다. 데이터 문제가
+// 아니라 순서 문제이므로 잠시 뒤 다시 쓰면 통과한다 — 260912 실측(동시 dispatch 2건 중 1건 실패).
+// 워크플로 concurrency 가드가 1차 방어이고, 이 재시도는 그 밖의 writer(예: 예약쿼리)와
+// 겹쳤을 때의 2차 방어다.
+const TX_CONFLICT_RETRIES = 3;
+const TX_CONFLICT_BASE_MS = 15000;
+
+function isTransactionConflict(err) {
+  const msg = String((err && err.message) || err || "");
+  return /Transaction is aborted due to concurrent update/i.test(msg)
+      || /could not serialize access due to concurrent update/i.test(msg);
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function loadRange(bq, start, end, rows) {
   const target = "`" + GCP_PROJECT + "." + DEST_DATASET + "." + DEST_TABLE + "`";
   let stmts = "BEGIN TRANSACTION;\n";
@@ -228,7 +244,21 @@ async function loadRange(bq, start, end, rows) {
     stmts += "INSERT INTO " + target + " (report_date, mall, cogs, ship) VALUES " + vals + ";\n";
   }
   stmts += "COMMIT TRANSACTION;";
-  await bq.query({ query: stmts, location: BQ_LOCATION });
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await bq.query({ query: stmts, location: BQ_LOCATION });
+      if (attempt) console.log("[cost] 트랜잭션 충돌 재시도 " + attempt + "회 만에 적재 성공");
+      return;
+    } catch (e) {
+      // 충돌이 아니거나 재시도를 다 썼으면 그대로 실패시킨다 — 조용히 넘기지 않는다(fail-open 금지).
+      if (!isTransactionConflict(e) || attempt >= TX_CONFLICT_RETRIES) throw e;
+      const waitMs = TX_CONFLICT_BASE_MS * Math.pow(2, attempt);
+      console.warn("[cost] 트랜잭션 충돌 — " + Math.round(waitMs / 1000) + "초 후 재시도 ("
+        + (attempt + 1) + "/" + TX_CONFLICT_RETRIES + ")");
+      await sleep(waitMs);
+    }
+  }
 }
 
 async function main() {
