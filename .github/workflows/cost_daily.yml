@@ -19,6 +19,13 @@ on:
         required: false
         default: ""
 
+# 같은 테이블(mart_cost_daily)을 두 실행이 동시에 쓰면 BQ 트랜잭션이 충돌해 한쪽이 죽는다.
+# 체이닝(workflow_run 21:2x~21:5x)·폴백 cron(21:40 UTC)·수동 실행이 겹칠 수 있으므로
+# 동시 실행 대신 큐에 세운다. cancel-in-progress=false — 앞 실행을 죽이면 적재가 반쪽이 된다.
+concurrency:
+  group: cost-daily-mart-cost-daily
+  cancel-in-progress: false
+
 jobs:
   load:
     # workflow_run(cafe24_daily 완료)일 땐 성공했을 때만. 스케줄/수동은 항상 실행.
@@ -30,8 +37,8 @@ jobs:
       BQ_PROJECT: rf-ads-db-500505
       BQ_LOCATION: asia-northeast3
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
       - name: 의존성 설치
