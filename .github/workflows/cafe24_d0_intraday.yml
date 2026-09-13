@@ -11,6 +11,12 @@ concurrency:
   group: cafe24-token
   cancel-in-progress: false
 
+# 중복 가드가 직전 성공 회차를 조회하려면 actions:read가 필요하다. 명시하면 기본값을 덮으므로
+# checkout용 contents:read도 함께 적는다.
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   load:
     runs-on: ubuntu-latest
@@ -30,18 +36,46 @@ jobs:
     steps:
       # 260811 수정: Daily(21:xx UTC = 06:xx KST)가 공유 cafe24-token 락에서 굶어 08-09부터
       # base 14테이블이 동결됐다. 그 시간대엔 intraday를 건너뛰어 Daily가 방해 없이 돌게 한다.
-      - name: Daily-window guard (skip at 21:xx UTC = 06:xx KST)
+      - name: 실행 가드 (Daily 창 · 중복 트리거)
         id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # (1) Daily 창 — 260811 수정: Daily(21:xx UTC = 06:xx KST)가 공유 cafe24-token 락에서
+          #     굶어 08-09부터 base 14테이블이 동결됐다. 그 시간대엔 Daily에 길을 내준다.
           if [ "$(date -u +%H)" = "21" ]; then
             echo "21:xx UTC = Daily window -> skip intraday this hour"
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-      - uses: actions/checkout@v4
+
+          # (2) 중복 트리거 가드 (260913 신설)
+          #     이 워크플로는 트리거가 둘이다 — Cloud Scheduler dispatch(매시 :00)와
+          #     GitHub cron("0 * * * *", 드리프트·드롭 잦음). 둘이 같은 시각에 겹치면 뒤엣놈이
+          #     cafe24-token 큐에서 ~44분 기다렸다가 **같은 구간을 한 번 더** 적재한다.
+          #     한 회차가 내부 4사이클로 44분을 쓰므로 중복 하나가 다음 회차들을 연쇄로 민다.
+          #     09-13 실측: 02:55 cron 중복 → 03:40·04:21·05:07 시작(최대 40분 지연, 3시간 지속),
+          #     08:00 중복은 44분 대기 후 실패해 알림 메일까지 냈다.
+          #     직전 성공이 10분 이내면 방금 같은 일을 했다는 뜻이므로 건너뛴다.
+          #     정상 매시 회차는 직전 성공이 ~16분 전이라 영향받지 않는다.
+          #     조회 실패 시에는 건너뛰지 않고 그대로 실행한다(적재를 빠뜨리는 쪽이 더 위험).
+          LAST=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cafe24_d0_intraday.yml/runs?status=success&per_page=1" \
+                   --jq '.workflow_runs[0].updated_at' 2>/dev/null || echo "")
+          if [ -n "$LAST" ] && [ "$LAST" != "null" ]; then
+            AGE=$(( $(date -u +%s) - $(date -u -d "$LAST" +%s) ))
+            echo "직전 성공 완료 = $LAST (${AGE}초 전)"
+            if [ "$AGE" -lt 600 ]; then
+              echo "10분 이내 중복 실행 -> skip (락을 즉시 놓아 다음 회차를 밀지 않는다)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            echo "직전 성공 조회 실패 -> 가드 미적용, 그대로 실행"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
         if: steps.guard.outputs.skip != 'true'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.guard.outputs.skip != 'true'
         with:
           python-version: "3.12"
