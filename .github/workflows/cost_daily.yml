@@ -18,6 +18,11 @@ on:
         description: "과거 N일 1회 백필(어제까지). 비우면 일상 모드(최근 3일)."
         required: false
         default: ""
+      v2_only:
+        description: "검증 중 legacy mart_cost_daily를 건드리지 않고 v2만 실행"
+        required: false
+        type: boolean
+        default: false
 
 # 같은 테이블(mart_cost_daily)을 두 실행이 동시에 쓰면 BQ 트랜잭션이 충돌해 한쪽이 죽는다.
 # 체이닝(workflow_run 21:2x~21:5x)·폴백 cron(21:40 UTC)·수동 실행이 겹칠 수 있으므로
@@ -50,6 +55,7 @@ jobs:
           ${{ secrets.GCP_SA_KEY }}
           KEY
       - name: 적재 (원가/물류 → mart_cost_daily)
+        if: ${{ github.event.inputs.v2_only != 'true' }}
         run: |
           if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
             node cost/cost_to_bigquery.js --backfill ${{ github.event.inputs.backfill_days }}
