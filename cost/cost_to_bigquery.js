@@ -291,4 +291,17 @@ async function main() {
   console.log(`[cost] mart.mart_cost_daily ${start}~${end} 재적재 완료 (${rows.length}행)`);
 }
 
-main().catch(e => { console.error("[cost] 실패:", e && e.stack || e); process.exit(1); });
+if (require.main === module) {
+  main().catch(e => { console.error("[cost] 실패:", e && e.stack || e); process.exit(1); });
+}
+
+// v2 주문단위 계산기가 검증된 동일 파서를 재사용한다. legacy 적재 동작은 그대로 유지한다.
+module.exports = {
+  parseCost,
+  ovGroups,
+  ovBoxCost,
+  sheetForDate,
+  readCostLedger,
+  kstDateStr,
+  addDaysStr,
+};

@@ -1,4 +1,4 @@
-name: Cost to BigQuery Daily (mart.mart_cost_daily)
+name: Cost to BigQuery Daily (legacy + order v2)
 
 # 원가·물류(택배비)를 mart.mart_cost_daily 에 적재. 통합리포트 자동입력(07:00)이 읽음.
 # ⚠ 07:00 KST 자동입력 전에 전일자까지 끝나야 함.
@@ -55,6 +55,13 @@ jobs:
             node cost/cost_to_bigquery.js --backfill ${{ github.event.inputs.backfill_days }}
           else
             node cost/cost_to_bigquery.js
+          fi
+      - name: 적재 (주문구성 원가/물류 → dtc_order_cost_daily_v2)
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
+            node cost/order_cost_daily_v2.js --backfill ${{ github.event.inputs.backfill_days }}
+          else
+            node cost/order_cost_daily_v2.js
           fi
       - if: always()
         run: rm -f sa_key.json
