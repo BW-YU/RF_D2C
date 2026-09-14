@@ -38,6 +38,11 @@ function csvCells(line) {
   out.push(cur); return out;
 }
 
+function dateValue(v) {
+  if (!v) return "";
+  return String(v && v.value != null ? v.value : v).slice(0, 10);
+}
+
 function loadRatecard(file = path.join(__dirname, "ship_ratecard.csv")) {
   const lines = fs.readFileSync(file, "utf8").trim().split(/\r?\n/);
   const head = csvCells(lines.shift());
@@ -131,7 +136,7 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
         order_to_ship_lag_days_sum: 0, order_to_ship_lag_orders: 0,
         delivered_date_orders: 0, deals: new Map() };
       a.order_count++;
-      const orderDate = String(order.lines[0].orderDate || "").slice(0, 10);
+      const orderDate = dateValue(order.lines[0].orderDate);
       const orderNet = order.lines.reduce((s, x) => s + Number(x.allocatedNet || 0), 0);
       if (orderDate) {
         const lag = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${orderDate}T00:00:00Z`)) / 86400000);
@@ -142,7 +147,7 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
           a.same_order_month_net_revenue += orderNet;
         }
       }
-      if (order.lines.some(x => x.deliveredDate)) a.delivered_date_orders++;
+      if (order.lines.some(x => dateValue(x.deliveredDate))) a.delivered_date_orders++;
       let units = 0, orderCogs = 0, orderCostOk = true;
       const parsedLines = [];
       const types = new Set(), components = new Set();
@@ -281,4 +286,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(e => { console.error("[cost-v2] 실패:", e && e.stack || e); process.exit(1); });
-module.exports = { csvCells, loadRatecard, brandOf, priceBrand, dealFor, productType, rateAsOf, computeDaily };
+module.exports = { csvCells, dateValue, loadRatecard, brandOf, priceBrand, dealFor, productType, rateAsOf, computeDaily };
