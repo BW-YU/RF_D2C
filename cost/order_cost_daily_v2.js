@@ -21,8 +21,10 @@ const PROJECT = process.env.BQ_PROJECT || "rf-ads-db-500505";
 const LOCATION = process.env.BQ_LOCATION || "asia-northeast3";
 const SOURCE = "cafe24.rf_cafe24_order_items_current";
 const TARGET = "mart.dtc_order_cost_daily_v2";
+const ORDER_TARGET = "mart.dtc_order_cost_daily_v3";
 const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 3);
 const ENGINE_VERSION = "order-cost-v2.1.0";
+const ORDER_ENGINE_VERSION = "order-cost-v3.0.0";
 const COST_MIN_COVERAGE = Number(process.env.COST_MIN_COVERAGE || 0.95);
 const SHIP_MIN_COVERAGE = Number(process.env.SHIP_MIN_COVERAGE || 0.95);
 
@@ -200,7 +202,8 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
   return output;
 }
 
-async function sourceRows(bq, start, end) {
+async function sourceRows(bq, start, end, basis = "shipped") {
+  const orderBasis = basis === "order";
   const sql = `WITH items AS (
     SELECT *, DATE(TIMESTAMP(JSON_VALUE(raw_json,'$.shipped_date')),'Asia/Seoul') ship_date,
       GREATEST((IFNULL(SAFE_CAST(JSON_VALUE(raw_json,'$.product_price') AS FLOAT64),product_price)
@@ -208,15 +211,16 @@ async function sourceRows(bq, start, end) {
         - IFNULL(SAFE_CAST(JSON_VALUE(raw_json,'$.additional_discount_price') AS FLOAT64),0))*quantity,1) line_weight
     FROM \`${PROJECT}.${SOURCE}\`
     WHERE mall IN ('cloop','sprint')
-      AND DATE(TIMESTAMP(JSON_VALUE(raw_json,'$.shipped_date')),'Asia/Seoul') BETWEEN '${start}' AND '${end}'
+      ${orderBasis ? "" : `AND DATE(TIMESTAMP(JSON_VALUE(raw_json,'$.shipped_date')),'Asia/Seoul') BETWEEN '${start}' AND '${end}'`}
       AND IFNULL(JSON_VALUE(raw_json,'$.status_code'),'') NOT LIKE 'C%'
   ), orders AS (
     SELECT mall,order_id, DATE(ordered_at,'Asia/Seoul') order_date,
       SAFE_CAST(JSON_VALUE(raw_json,'$.actual_order_amount.order_price_amount') AS FLOAT64)/1.1 order_net
     FROM \`${PROJECT}.cafe24.rf_cafe24_orders_current\`
     WHERE mall IN ('cloop','sprint') AND IFNULL(JSON_VALUE(raw_json,'$.canceled'),'F') NOT IN ('T','M')
+      ${orderBasis ? `AND DATE(ordered_at,'Asia/Seoul') BETWEEN '${start}' AND '${end}'` : ""}
   )
-  SELECT ship_date AS date, o.order_date AS orderDate,
+  SELECT ${orderBasis ? "o.order_date" : "ship_date"} AS date, o.order_date AS orderDate,
     DATE(TIMESTAMP(JSON_VALUE(i.raw_json,'$.delivered_date')),'Asia/Seoul') AS deliveredDate,
     i.mall AS mallId, i.order_id AS orderId,
     JSON_VALUE(raw_json,'$.order_item_code') AS orderItemCode,
@@ -237,8 +241,10 @@ async function readPriceLog(bq) {
   return rows.map(r => ({ ...r, packCount: Number(r.packCount), salePrice: Number(r.salePrice) }));
 }
 
-async function ensureAndLoad(bq, start, end, rows) {
-  const target = `\`${PROJECT}.${TARGET}\``;
+async function ensureAndLoad(bq, start, end, rows, basis = "shipped") {
+  const orderBasis = basis === "order";
+  const targetName = orderBasis ? ORDER_TARGET : TARGET;
+  const target = `\`${PROJECT}.${targetName}\``;
   const ddl = `CREATE TABLE IF NOT EXISTS ${target} (
     report_date DATE NOT NULL, mall STRING NOT NULL, recognized_net_revenue INT64,
     estimated_cogs INT64, estimated_logistics INT64,
@@ -262,7 +268,9 @@ async function ensureAndLoad(bq, start, end, rows) {
     ADD COLUMN IF NOT EXISTS delivered_date_orders INT64,
     ADD COLUMN IF NOT EXISTS delivery_date_coverage FLOAT64`, location: LOCATION });
   const q = s => `'${String(s).replace(/'/g, "''")}'`;
-  const values = rows.map(r => `('${r.report_date}','${r.mall}',${Math.round(r.net_revenue)},${Math.round(r.cogs)},${Math.round(r.logistics)},${r.order_count},${r.item_line_count},${r.item_quantity},${r.cogs_matched_lines},${r.logistics_matched_orders},${r.exact_rate_orders},${r.unmatched_cogs_lines},${r.unmatched_logistics_orders},${r.cost_coverage},${r.shipping_coverage},${r.deal_mapped_lines},${r.deal_map_coverage},${q(r.deal_breakdown_json)},${r.prior_order_month_orders},${Math.round(r.prior_order_month_net_revenue)},${Math.round(r.same_order_month_net_revenue)},${r.avg_order_to_ship_days == null ? 'NULL' : r.avg_order_to_ship_days},${r.delivered_date_orders},${r.delivery_date_coverage},${r.is_trusted},'order_composition_estimate','shipped_date_proxy',FALSE,'${ENGINE_VERSION}',CURRENT_TIMESTAMP())`).join(",\n");
+  const recognitionBasis = orderBasis ? "order_date" : "shipped_date_proxy";
+  const engineVersion = orderBasis ? ORDER_ENGINE_VERSION : ENGINE_VERSION;
+  const values = rows.map(r => `('${r.report_date}','${r.mall}',${Math.round(r.net_revenue)},${Math.round(r.cogs)},${Math.round(r.logistics)},${r.order_count},${r.item_line_count},${r.item_quantity},${r.cogs_matched_lines},${r.logistics_matched_orders},${r.exact_rate_orders},${r.unmatched_cogs_lines},${r.unmatched_logistics_orders},${r.cost_coverage},${r.shipping_coverage},${r.deal_mapped_lines},${r.deal_map_coverage},${q(r.deal_breakdown_json)},${r.prior_order_month_orders},${Math.round(r.prior_order_month_net_revenue)},${Math.round(r.same_order_month_net_revenue)},${r.avg_order_to_ship_days == null ? 'NULL' : r.avg_order_to_ship_days},${r.delivered_date_orders},${r.delivery_date_coverage},${r.is_trusted},'order_composition_estimate','${recognitionBasis}',FALSE,'${engineVersion}',CURRENT_TIMESTAMP())`).join(",\n");
   const dml = `BEGIN TRANSACTION;
     DELETE FROM ${target} WHERE report_date BETWEEN '${start}' AND '${end}';
     ${values ? `INSERT INTO ${target} (report_date,mall,recognized_net_revenue,estimated_cogs,estimated_logistics,order_count,item_line_count,item_quantity,cogs_matched_lines,logistics_matched_orders,exact_rate_orders,unmatched_cogs_lines,unmatched_logistics_orders,cost_coverage,shipping_coverage,deal_mapped_lines,deal_map_coverage,deal_breakdown_json,prior_order_month_orders,prior_order_month_net_revenue,same_order_month_net_revenue,avg_order_to_ship_days,delivered_date_orders,delivery_date_coverage,is_trusted,value_type,recognition_basis,is_accounting_actual,engine_version,calculated_at) VALUES ${values};` : ""}
@@ -272,17 +280,18 @@ async function ensureAndLoad(bq, start, end, rows) {
 
 async function main() {
   const args = process.argv.slice(2), bi = args.indexOf("--backfill");
+  const basis = args.includes("--order-date") ? "order" : "shipped";
   const span = bi >= 0 ? Number(args[bi + 1]) : LOOKBACK_DAYS;
   if (!Number.isInteger(span) || span < 1 || span > 400) throw new Error("backfill_days must be 1..400");
   const end = addDaysStr(kstDateStr(new Date()), -1), start = addDaysStr(end, -(span - 1));
   const bq = new BigQuery({ projectId: PROJECT, location: LOCATION });
   const ledger = await readCostLedger(bq); ovGroups(parseCost(sheetForDate(ledger, null)));
-  const rows = computeDaily(await sourceRows(bq, start, end), ledger, loadRatecard(), await readPriceLog(bq));
+  const rows = computeDaily(await sourceRows(bq, start, end, basis), ledger, loadRatecard(), await readPriceLog(bq));
   if (!rows.length) throw new Error(`no rows for ${start}..${end}`);
   for (const r of rows) console.log(`[cost-v2] ${r.report_date} ${r.mall} net=${Math.round(r.net_revenue)} cogs=${Math.round(r.cogs)} logistics=${Math.round(r.logistics)} cost_coverage=${r.cost_coverage.toFixed(4)} shipping_coverage=${r.shipping_coverage.toFixed(4)} deal_coverage=${r.deal_map_coverage.toFixed(4)} trusted=${r.is_trusted}`);
   if (args.includes("--dry-run")) return;
-  await ensureAndLoad(bq, start, end, rows);
-  console.log(`[cost-v2] ${TARGET} ${start}~${end} ${rows.length}행 적재 · trusted ${rows.filter(r => r.is_trusted).length}/${rows.length}`);
+  await ensureAndLoad(bq, start, end, rows, basis);
+  console.log(`[cost-v2] ${basis === "order" ? ORDER_TARGET : TARGET} ${start}~${end} ${rows.length}행 적재 · trusted ${rows.filter(r => r.is_trusted).length}/${rows.length}`);
 }
 
 if (require.main === module) main().catch(e => { console.error("[cost-v2] 실패:", e && e.stack || e); process.exit(1); });

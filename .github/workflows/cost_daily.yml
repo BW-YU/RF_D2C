@@ -69,5 +69,12 @@ jobs:
           else
             node cost/order_cost_daily_v2.js
           fi
+      - name: 적재 (주문일 구성 원가/물류 → dtc_order_cost_daily_v3)
+        run: |
+          if [ -n "${{ github.event.inputs.backfill_days }}" ]; then
+            node cost/order_cost_daily_v2.js --order-date --backfill ${{ github.event.inputs.backfill_days }}
+          else
+            node cost/order_cost_daily_v2.js --order-date
+          fi
       - if: always()
         run: rm -f sa_key.json
