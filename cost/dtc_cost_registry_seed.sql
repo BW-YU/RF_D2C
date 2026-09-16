@@ -11,9 +11,9 @@ USING (
 ) S
 ON T.cost_id=S.cost_id AND T.valid_from=S.valid_from
 WHEN NOT MATCHED THEN INSERT (
-  cost_id,cost_name,cost_class,cm_scope,mall,allocation_basis,amount,rate,
+  cost_id,cost_name,cost_class,cm_scope,mall,allocation_basis,amount,rate,usage_months,
   valid_from,valid_to,vendor,contract_id,campaign_id,source_ref,note,active,updated_by,updated_at
 ) VALUES (
-  S.cost_id,S.cost_name,S.cost_class,S.cm_scope,S.mall,S.allocation_basis,S.amount,S.rate,
+  S.cost_id,S.cost_name,S.cost_class,S.cm_scope,S.mall,S.allocation_basis,S.amount,S.rate,NULL,
   S.valid_from,S.valid_to,S.vendor,S.contract_id,S.campaign_id,S.source_ref,S.note,TRUE,'codex-seed',CURRENT_TIMESTAMP()
 );

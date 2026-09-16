@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS `rf-ads-db-500505.ops_input.dtc_cost_registry` (
   allocation_basis STRING NOT NULL OPTIONS(description='daily|monthly|period_total|net_pct'),
   amount NUMERIC OPTIONS(description='daily/monthly/period_total 원화 금액'),
   rate FLOAT64 OPTIONS(description='net_pct용 소수 비율. 0.00342 = 0.342%'),
+  usage_months INT64 OPTIONS(description='period_total 활용 개월 수. valid_from + N개월 - 1일로 일할 종료일 계산'),
   valid_from DATE NOT NULL,
   valid_to DATE NOT NULL,
   vendor STRING,
@@ -21,4 +22,3 @@ CREATE TABLE IF NOT EXISTS `rf-ads-db-500505.ops_input.dtc_cost_registry` (
 )
 CLUSTER BY cm_scope, cost_class, mall
 OPTIONS(description='PA·CPS·CRM·마테크·브랜드광고 비용의 유효기간형 입력 원장. CM1/CM2 경계를 명시한다.');
-
