@@ -1,0 +1,2 @@
+cost_id,cost_name,cost_class,cm_scope,mall,allocation_basis,amount,rate,valid_from,valid_to,vendor,contract_id,campaign_id,source_ref,note,active,updated_by,updated_at
+example_brand_ad,브랜드 캠페인 예시,brand_ad,CM2,all,period_total,10000000,,2026-09-01,2026-09-30,거래처명,계약번호,캠페인ID,증빙 링크,예시 행은 업로드하지 말 것,true,user@example.com,2026-09-16T00:00:00Z
