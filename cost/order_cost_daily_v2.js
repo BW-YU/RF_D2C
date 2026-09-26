@@ -287,7 +287,13 @@ async function main() {
   const bq = new BigQuery({ projectId: PROJECT, location: LOCATION });
   const ledger = await readCostLedger(bq); ovGroups(parseCost(sheetForDate(ledger, null)));
   const rows = computeDaily(await sourceRows(bq, start, end, basis), ledger, loadRatecard(), await readPriceLog(bq));
-  if (!rows.length) throw new Error(`no rows for ${start}..${end}`);
+  if (!rows.length) {
+    // 260927: 출고 0건은 정상일 수 있다 — 2026 추석(09-24~26) 물류 휴무에 출고일 기준 창이 통째로 비어
+    //   여기서 throw → 같은 job의 v3(주문일 기준) 적재까지 건너뛰어 클룹 09-26 원가가 비었다.
+    //   출고일 기준만 빈 창을 허용한다. 주문일 기준 0건은 원천 결손이므로 그대로 실패시킨다.
+    if (basis !== "shipped") throw new Error(`no rows for ${start}..${end}`);
+    console.warn(`[cost-v2] ${start}..${end} 출고 0건 — 물류 휴무로 보고 빈 창으로 적재한다`);
+  }
   for (const r of rows) console.log(`[cost-v2] ${r.report_date} ${r.mall} net=${Math.round(r.net_revenue)} cogs=${Math.round(r.cogs)} logistics=${Math.round(r.logistics)} cost_coverage=${r.cost_coverage.toFixed(4)} shipping_coverage=${r.shipping_coverage.toFixed(4)} deal_coverage=${r.deal_map_coverage.toFixed(4)} trusted=${r.is_trusted}`);
   if (args.includes("--dry-run")) return;
   await ensureAndLoad(bq, start, end, rows, basis);
