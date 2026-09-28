@@ -2,7 +2,7 @@ import unittest
 
 import datetime
 
-from freshness_check import summarize_ga4_quality, apply_ack, load_acks
+from freshness_check import summarize_ga4_quality, apply_ack, load_acks, active_checks, CHECKS, DORMANT
 
 
 def row(brand, status, sessions=100, ratio=1.0):
@@ -97,6 +97,20 @@ class AckTests(unittest.TestCase):
         self.assertNotIn("메타 광고", acks)
         self.assertIn("카카오모먼트", acks)
 
+
+
+class DormantMediaTest(unittest.TestCase):
+    def test_kakao_moment_is_dormant_and_skipped(self):
+        # 260929: 카카오 모먼트 광고 미집행 — 기한부 인지 장애(ACK)가 만료되자 매일 STALE이 다시 나갔다.
+        labels = [c[0] for c in active_checks()]
+        self.assertIn("카카오모먼트", DORMANT)
+        self.assertNotIn("카카오모먼트", labels)
+        self.assertEqual(len(CHECKS) - 1, len(labels))
+        self.assertIn("메타 광고", labels)
+
+    def test_resuming_media_restores_check(self):
+        labels = [c[0] for c in active_checks(dormant={})]
+        self.assertIn("카카오모먼트", labels)
 
 if __name__ == "__main__":
     unittest.main()
