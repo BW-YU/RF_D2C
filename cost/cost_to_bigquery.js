@@ -110,14 +110,21 @@ function ovCleanFl(p) { let f = String(p).replace(/\([^)]*\)/g, " ").replace(/[\
 function ovIpName(pn) { const m = String(pn).match(/(\d+)\s*개입/); return m ? +m[1] : null; }
 function ovGrpOf(pn) { const pns = String(pn).replace(/\s/g, ""); return OV_GROUPS.find(g => pns.includes(g)) || null; }
 function ovGroups(cost) { OV_GROUPS = [...new Set(cost.map(c => c.grp).concat(OV_OVERRIDE.map(o => o.g)))].filter(Boolean).sort((a, b) => b.length - a.length); return OV_GROUPS; }
+// 260929: 음료가 아닌 옵션 조각(굿즈·멤버 선택)은 캔으로 세지 않는다. 「이브닛X스프린트 콜라보」 E세트
+//   「포토카드 15장 + 아크릴키링 5종 + 캔쿨러 1종」(음료 없음)이 21캔으로 계산돼 09-28 원가율이 35%로 튀었다.
+//   「N개입」이 있는 조각은 음료이므로 그대로 센다.
+const OV_NON_DRINK = /포토카드|키링|캔쿨러|쿨러|굿즈|스티커|엽서|포스터|멤버\s*선택|랜덤/;
 function ovPieces(pn, on) {
   on = ovPre(on); const parts = on.split(/[\/+]/).map(x => x.trim()).filter(Boolean), res = [];
-  parts.forEach(p => { const cm = p.match(/\((\d+)\s*개입\)/) || p.match(/(\d+)\s*개입/) || p.match(/(\d+)\s*$/) || p.match(/\((\d+)\)/) || p.match(/(\d+)/); let cnt = cm ? +cm[1] : null; const fl = ovCleanFl(p); if (!fl) return; res.push({ fl, cnt }); });
+  parts.forEach(p => { if (OV_NON_DRINK.test(p) && !/\d+\s*개입/.test(p)) return; const cm = p.match(/\((\d+)\s*개입\)/) || p.match(/(\d+)\s*개입/) || p.match(/(\d+)\s*$/) || p.match(/\((\d+)\)/) || p.match(/(\d+)/); let cnt = cm ? +cm[1] : null; const fl = ovCleanFl(p); if (!fl) return; res.push({ fl, cnt }); });
   if (!res.length) return [];
   if (res.length === 1 && res[0].cnt == null) res[0].cnt = ovIpName(pn) || 1;
   res.forEach(r => { if (r.cnt == null) r.cnt = 1; });
   return res;
 }
+// 260929: 제품군 평균에서 용량 없는 세트·박스 단가를 뺀다. 「스프린트」군에 에반게리온 기프트 세트(₩12,580)가
+//   섞여 캔당 평균이 ₩1,498(실제 ₩352~427)로 부풀었다 — 맛 미지정(골라담기) 스프린트 원가 전반이 3.6배 과대.
+function ovUnitCand(cand) { const withMl = cand.filter(c => c.ml); return withMl.length ? withMl : cand; }
 function ovFlavorCost(pn, fl, cost, sp) {
   const grp = ovGrpOf(pn); if (!grp) return null;
   if (sp) return spFlavorCost(pn, fl);
@@ -127,7 +134,8 @@ function ovFlavorCost(pn, fl, cost, sp) {
   if (!cand.length) return 0;
   const hits = cand.filter(c => c.flav && f && (f.includes(c.flav) || c.flav.includes(f)));
   if (hits.length) { const np = hits.filter(c => !c.pet); return (np[0] || hits[0]).price; }
-  return Math.round(cand.reduce((a, b) => a + b.price, 0) / cand.length);
+  const uc = ovUnitCand(cand);
+  return Math.round(uc.reduce((a, b) => a + b.price, 0) / uc.length);
 }
 function ovBoxCost(pn, on, cost, sp) {
   if (!ovGrpOf(pn)) return null;
@@ -138,7 +146,8 @@ function ovBoxCost(pn, on, cost, sp) {
     const psz = ovSizeOf(pn); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; else if (psz >= 1000) return null; }
     const ipm = String(on).match(/(\d+)\s*개입/) || String(pn).match(/(\d+)\s*개입/) || String(on).match(/(\d+)\s*$/); const ip = ipm ? +ipm[1] : null;
     if (!cand.length || !ip) return null;
-    const per = Math.round(cand.reduce((a, b) => a + b.price, 0) / cand.length);
+    const uc = ovUnitCand(cand);
+    const per = Math.round(uc.reduce((a, b) => a + b.price, 0) / uc.length);
     return { boxCost: per * ip, cans: ip, pieces: 1 };
   }
   let boxCost = 0, cans = 0; ps.forEach(p => { boxCost += (p.cnt || 0) * (ovFlavorCost(pn, p.fl, cost, sp) || 0); cans += (p.cnt || 0); });
