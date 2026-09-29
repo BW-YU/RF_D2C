@@ -48,6 +48,22 @@ CHECKS = [
 ]
 
 
+# 휴면 매체 — 광고를 집행하지 않아 적재가 멈춘 것이 정상인 원천. 점검·경고에서 통째로 뺀다(260929).
+#   「인지된 장애」(기한부 WARN)와 다르다: 장애는 고쳐야 하지만 휴면은 고칠 것이 없다. 기한부로 두면
+#   기한이 지나는 날부터 매일 빨간 경고가 다시 나간다(09-22~29 카카오모먼트 실측).
+#   광고를 재개하면 이 목록에서 지운다 — 대시보드 source_improvement_loop.py 의 KAKAO_ADS_ACTIVE 와 같이 바꾼다.
+DORMANT = {
+    "카카오모먼트": "카카오 모먼트 광고 미집행(부문대표 260926) — 재개 시 이 줄 삭제",
+}
+
+
+def active_checks(checks=None, dormant=None):
+    """휴면 매체를 뺀 점검 목록."""
+    checks = CHECKS if checks is None else checks
+    dormant = DORMANT if dormant is None else dormant
+    return [c for c in checks if c[0] not in dormant]
+
+
 # 인지된 장애(사람이 고쳐야 하는 것) — 기한까지는 STALE(실패·이메일) 대신 WARN으로만 남긴다.
 # 매 회차 같은 실패 메일을 받는 것은 감시가 아니라 소음이다. 기한이 지나면 자동으로 다시 STALE.
 #   {표시이름: ("YYYY-MM-DD", "사유")}. 환경변수 FRESHNESS_ACK="라벨=YYYY-MM-DD:사유;라벨2=..." 로 덧씌울 수 있다.
@@ -194,7 +210,7 @@ def main():
     client = bigquery.Client(project=BQ_PROJECT, location=BQ_LOCATION)
     acks = load_acks()
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date()
-    results = [apply_ack(check_one(client, *c), acks, today) for c in CHECKS]
+    results = [apply_ack(check_one(client, *c), acks, today) for c in active_checks()]
     results.append(check_ga4_quality(client))
     stale = [r for r in results if not r["ok"]]
     warnings = [r for r in results if r.get("warning")]
