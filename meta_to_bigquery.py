@@ -120,6 +120,20 @@ def _is_rate_limit(err):
     return "request limit" in msg or "limit reached" in msg or "too many" in msg
 
 
+def _is_transient(err):
+    """메타가 일시 오류로 표시한 실패인지 판별 (261001: 비동기 리포트 Job Failed·code 2637).
+
+    이런 실패는 몇십 초 뒤 같은 요청을 다시 만들면 통과한다. 재시도 없이 실행을 실패로 끝내면
+    매시간 워크플로 실패 메일만 쌓이고 다음 정시 실행에서 어차피 복구된다.
+    """
+    if not err:
+        return False
+    if err.get("is_transient") is True:
+        return True
+    code = err.get("code", err.get("error_code"))
+    return code in (1, 2, 2637) or err.get("error_subcode") == 1815107
+
+
 def fetch_insights(account_id, since, until):
     all_fields = SCALAR_FIELDS + NESTED_FIELDS
     backoff = 60
@@ -150,8 +164,12 @@ def fetch_insights(account_id, since, until):
             time.sleep(backoff)
             backoff = min(backoff * 2, 900)
             continue
+        if _is_transient(info):
+            log.warning("리포트 일시 실패(%s) → 30초 뒤 새 리포트로 재시도", info.get("error_code") or info.get("async_status"))
+            time.sleep(30)
+            continue
         raise RuntimeError(f"비동기 작업 실패: {info}")
-    raise RuntimeError("요청 한도가 지속되어 재시도 한도 초과")
+    raise RuntimeError("요청 한도·일시 오류가 지속되어 재시도 한도 초과")
 
 
 def _start_async_report(account_id, fields, since, until):
@@ -214,7 +232,11 @@ def _request_with_retry(url, params, max_retries=6):
         if resp.status_code == 200:
             return resp
         last = resp.text[:400]
-        if resp.status_code in (429, 500, 502, 503):
+        try:
+            err = resp.json().get("error")
+        except ValueError:
+            err = None
+        if resp.status_code in (429, 500, 502, 503) or _is_transient(err):
             wait = min(60, 2 ** attempt * 2)
             log.warning("HTTP %s → %d초 후 재시도(%d/%d)", resp.status_code, wait, attempt + 1, max_retries)
             time.sleep(wait)
