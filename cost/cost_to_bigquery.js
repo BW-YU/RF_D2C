@@ -35,6 +35,7 @@ const MALLS = ["cloop", "sprint"];
 
 // ===== 원가 상수 (api/report.js와 동일) =====
 const LEDGER_TABLE = "mart.rf_cost_ledger"; // 찐원가 유효기간 원장(effective_from·item_name·cost)
+const COST_UPDATE_TABLE = "ops_input.cost_update"; // 원가표 갱신분. 원장에 없는 신규 품목만 보충한다(261002)
 const OV_SHIP = { 6: 2563, 12: 3237, 15: 3233, 20: 2905, 24: 3562 };
 const OV_ALIAS = { "사과": "오리지널", "헛개마카": "마카헛개", "샤인머스켓": "샤인머스캣", "샤머": "샤인머스캣", "화이트": "화이트발사믹" };
 const OV_OVERRIDE = [{ g: "오프아워", f: "라임브리즈", p: 328 }, { g: "오프아워", f: "피치릴렉서", p: 329 }, { g: "티카이브", f: "인진쑥차", p: 331 }, { g: "티카이브", f: "호박팥차", p: 355 }];
@@ -118,12 +119,15 @@ function ovPieces(pn, on) {
   res.forEach(r => { if (r.cnt == null) r.cnt = 1; });
   return res;
 }
+// 용량이 있는 상품(캔·병)의 단가 후보에서 용량 없는 비캔 품목(보틀·굿즈)을 뺀다 — 에반게리온 보틀 12,580원이
+//   스프린트 그룹 평균에 섞여 슈퍼포커스 355mL가 캔당 1,498원(실제 ~330원)으로 잡혔다(261002). 보틀 상품 자체는 용량이 없어 그대로다.
+function ovSized(cand, psz) { if (!psz) return cand; const s = cand.filter(c => c.ml != null); return s.length ? s : cand; }
 function ovFlavorCost(pn, fl, cost, sp) {
   const grp = ovGrpOf(pn); if (!grp) return null;
   if (sp) return spFlavorCost(pn, fl);
   const f = OV_ALIAS[fl] || fl; const pns = String(pn).replace(/\s/g, "");
   const ov = OV_OVERRIDE.find(o => pns.includes(o.g) && f && (f.includes(o.f) || o.f.includes(f))); if (ov) return ov.p;
-  let cand = cost.filter(c => c.grp === grp); const psz = ovSizeOf(pn); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; }
+  const psz = ovSizeOf(pn); let cand = ovSized(cost.filter(c => c.grp === grp), psz); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; }
   if (!cand.length) return 0;
   const hits = cand.filter(c => c.flav && f && (f.includes(c.flav) || c.flav.includes(f)));
   if (hits.length) { const np = hits.filter(c => !c.pet); return (np[0] || hits[0]).price; }
@@ -134,8 +138,8 @@ function ovBoxCost(pn, on, cost, sp) {
   if (sp) return spBoxCost(pn, on);
   const ps = ovPieces(pn, on);
   if (!ps.length) {
-    const grp = ovGrpOf(pn); let cand = cost.filter(c => c.grp === grp);
-    const psz = ovSizeOf(pn); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; else if (psz >= 1000) return null; }
+    const grp = ovGrpOf(pn); const psz = ovSizeOf(pn); let cand = ovSized(cost.filter(c => c.grp === grp), psz);
+    if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; else if (psz >= 1000) return null; }
     const ipm = String(on).match(/(\d+)\s*개입/) || String(pn).match(/(\d+)\s*개입/) || String(on).match(/(\d+)\s*$/); const ip = ipm ? +ipm[1] : null;
     if (!cand.length || !ip) return null;
     const per = Math.round(cand.reduce((a, b) => a + b.price, 0) / cand.length);
@@ -157,9 +161,17 @@ function addDaysStr(str, n) {
 // ===== 데이터 소스 =====
 // 찐원가 원장 로드 → item_name별 시점 단가 인덱스(오름차순 정렬 [{ef, cost}])
 async function readCostLedger(bq) {
+  // 원장은 수동 스냅샷이라 신규 SKU가 늦게 들어온다. 원장에 아예 없는 품목만 cost_update에서 보충한다
+  //   — 없으면 그룹 평균 폴백에 비캔 품목이 섞여 슈퍼포커스가 캔당 1,498원(실제 ~330원)으로 잡혔다(261002).
+  //   원장에 있는 품목의 단가는 건드리지 않는다.
   const sql = "SELECT CAST(effective_from AS STRING) AS ef, item_name, cost " +
     "FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` " +
-    "WHERE item_name IS NOT NULL AND cost IS NOT NULL AND cost > 0";
+    "WHERE item_name IS NOT NULL AND cost IS NOT NULL AND cost > 0 " +
+    "UNION ALL " +
+    "SELECT CAST(u.effective_from AS STRING), u.item_name, CAST(u.unit_cost AS FLOAT64) " +
+    "FROM `" + GCP_PROJECT + "." + COST_UPDATE_TABLE + "` u " +
+    "WHERE u.item_name IS NOT NULL AND u.unit_cost > 0 AND u.item_name NOT IN " +
+    "(SELECT item_name FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` WHERE item_name IS NOT NULL)";
   const [rows] = await bq.query({ query: sql, location: BQ_LOCATION });
   const idx = new Map();
   rows.forEach(r => { const k = String(r.item_name); if (!idx.has(k)) idx.set(k, []); idx.get(k).push({ ef: String(r.ef), cost: +r.cost }); });

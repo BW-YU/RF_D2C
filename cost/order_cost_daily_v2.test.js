@@ -22,4 +22,10 @@ assert.equal(daily[0].prior_order_month_net_revenue, 10000);
 assert.equal(daily[0].same_order_month_net_revenue, 0);
 assert.equal(daily[0].avg_order_to_ship_days, 1);
 assert.equal(daily[0].delivery_date_coverage, 1);
+// 261002: 그룹 평균 폴백은 용량 없는 비캔 품목(보틀)을 빼고 캔만 평균한다.
+const { parseCost, ovGroups, ovBoxCost } = require("./cost_to_bigquery");
+const sp = parseCost([[0, 0, 0, "[상온]클룹_스프린트,진격거,500ml*1입", 0, 0, 400],
+  [0, 0, 0, "[상온]클룹_스프린트,에반게리온,보틀", 0, 0, 12580]]);
+ovGroups(sp);
+assert.deepEqual(ovBoxCost("스프린트 신상 에너지 355mL", "개입 수=24개입_1", sp, false), { boxCost: 9600, cans: 24, pieces: 1 });
 console.log("order_cost_daily_v2 tests: ok");
