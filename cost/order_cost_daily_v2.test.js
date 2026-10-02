@@ -28,4 +28,22 @@ const sp = parseCost([[0, 0, 0, "[상온]클룹_스프린트,진격거,500ml*1�
   [0, 0, 0, "[상온]클룹_스프린트,에반게리온,보틀", 0, 0, 12580]]);
 ovGroups(sp);
 assert.deepEqual(ovBoxCost("스프린트 신상 에너지 355mL", "개입 수=24개입_1", sp, false), { boxCost: 9600, cans: 24, pieces: 1 });
+// 261002: 상품명에 용량이 없으면 그룹 주력 규격(여기선 500mL) 단가를 쓴다(맛 일치 첫 품목 250mL로 새지 않게).
+const as = parseCost([[0, 0, 0, "클룹_애사비소다,오리지널,250ml", 0, 0, 237],
+  [0, 0, 0, "클룹_애사비소다,오리지널,500ml", 0, 0, 292],
+  [0, 0, 0, "클룹_애사비소다,청사과,500ml", 0, 0, 300]]);
+ovGroups(as);
+assert.equal(ovBoxCost("[시크릿 특가] 애사비소다 최저가", "맛 선택=오리지널*24", as, false).boxCost, 292 * 24);
+assert.equal(ovBoxCost("클룹 애사비소다 250mL", "맛 선택=오리지널*24", as, false).boxCost, 237 * 24);
+// 261002: 맛 없는 옵션의 그룹 평균에서 페트를 뺀다.
+const ap = parseCost([[0, 0, 0, "클룹_애사비소다,오리지널,500ml", 0, 0, 292],
+  [0, 0, 0, "[상온]클룹_페트,애사비소다,오리지널,500ml", 0, 0, 126]]);
+ovGroups(ap);
+assert.equal(ovBoxCost("클룹 애사비소다 500mL", "개입 수=48개입#1", ap, false).boxCost, 292 * 48);
+// 261002: 주력 규격이 250mL인 그룹은 250mL가 기본이다.
+const se = parseCost([[0, 0, 0, "클룹_스프린트에너지,사우어베리,250ml", 0, 0, 248],
+  [0, 0, 0, "클룹_스프린트에너지,애플블라스트,250ml", 0, 0, 245],
+  [0, 0, 0, "클룹_스프린트에너지,레몬,500ml", 0, 0, 420]]);
+ovGroups(se);
+assert.equal(ovBoxCost("[시크릿 특가] 스프린트 에너지드링크 4종 골라담기", "개입 수=48개입#1", se, false).boxCost, Math.round((248 + 245) / 2) * 48);
 console.log("order_cost_daily_v2 tests: ok");
