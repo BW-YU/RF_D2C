@@ -122,12 +122,23 @@ function ovPieces(pn, on) {
 // 용량이 있는 상품(캔·병)의 단가 후보에서 용량 없는 비캔 품목(보틀·굿즈)을 뺀다 — 에반게리온 보틀 12,580원이
 //   스프린트 그룹 평균에 섞여 슈퍼포커스 355mL가 캔당 1,498원(실제 ~330원)으로 잡혔다(261002). 보틀 상품 자체는 용량이 없어 그대로다.
 function ovSized(cand, psz) { if (!psz) return cand; const s = cand.filter(c => c.ml != null); return s.length ? s : cand; }
+// 캔 상품의 그룹 평균에서 페트(단가 110~126원)를 뺀다 — 옵션에 맛이 없는 애사비 주문(「개입 수=48개입#1」)이
+//   그룹 평균으로 가는데 페트 6종이 섞여 캔당 224원(실제 ~292원)이 됐다(261002). 상품명에 페트가 있으면 그대로.
+function ovNoPet(cand, pn) { if (/페트/.test(String(pn))) return cand; const s = cand.filter(c => !c.pet); return s.length ? s : cand; }
+// 상품명에 용량이 없으면 그 그룹의 주력 규격(품목 수 최다 용량)을 기본으로 본다 — 250mL·1.5L까지 섞인 평균이나
+//   맛 일치 첫 품목(250mL)으로 새지 않게(261002). 애사비소다=500, 스프린트에너지=250. 최다 용량이 동률이면 기본값 없음.
+function ovDefaultSize(cand, psz) {
+  if (psz) return psz;
+  const n = {}; cand.forEach(c => { if (c.ml != null) n[c.ml] = (n[c.ml] || 0) + 1; });
+  const top = Object.entries(n).sort((a, b) => b[1] - a[1]);
+  return top.length && (top.length === 1 || top[0][1] > top[1][1]) ? +top[0][0] : null;
+}
 function ovFlavorCost(pn, fl, cost, sp) {
   const grp = ovGrpOf(pn); if (!grp) return null;
   if (sp) return spFlavorCost(pn, fl);
   const f = OV_ALIAS[fl] || fl; const pns = String(pn).replace(/\s/g, "");
   const ov = OV_OVERRIDE.find(o => pns.includes(o.g) && f && (f.includes(o.f) || o.f.includes(f))); if (ov) return ov.p;
-  const psz = ovSizeOf(pn); let cand = ovSized(cost.filter(c => c.grp === grp), psz); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; }
+  let psz = ovSizeOf(pn); let cand = ovNoPet(ovSized(cost.filter(c => c.grp === grp), psz), pn); psz = ovDefaultSize(cand, psz); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; }
   if (!cand.length) return 0;
   const hits = cand.filter(c => c.flav && f && (f.includes(c.flav) || c.flav.includes(f)));
   if (hits.length) { const np = hits.filter(c => !c.pet); return (np[0] || hits[0]).price; }
@@ -138,7 +149,7 @@ function ovBoxCost(pn, on, cost, sp) {
   if (sp) return spBoxCost(pn, on);
   const ps = ovPieces(pn, on);
   if (!ps.length) {
-    const grp = ovGrpOf(pn); const psz = ovSizeOf(pn); let cand = ovSized(cost.filter(c => c.grp === grp), psz);
+    const grp = ovGrpOf(pn); const psz0 = ovSizeOf(pn); let cand = ovNoPet(ovSized(cost.filter(c => c.grp === grp), psz0), pn); const psz = ovDefaultSize(cand, psz0);
     if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; else if (psz >= 1000) return null; }
     const ipm = String(on).match(/(\d+)\s*개입/) || String(pn).match(/(\d+)\s*개입/) || String(on).match(/(\d+)\s*$/); const ip = ipm ? +ipm[1] : null;
     if (!cand.length || !ip) return null;
