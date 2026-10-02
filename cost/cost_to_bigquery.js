@@ -38,7 +38,7 @@ const LEDGER_TABLE = "mart.rf_cost_ledger"; // 찐원가 유효기간 원장(eff
 const COST_UPDATE_TABLE = "ops_input.cost_update"; // 원가표 갱신분. 원장에 없는 (품목, 적용 시작일) 단가를 보충한다(261002)
 const OV_SHIP = { 6: 2563, 12: 3237, 15: 3233, 20: 2905, 24: 3562 };
 const OV_ALIAS = { "사과": "오리지널", "헛개마카": "마카헛개", "샤인머스켓": "샤인머스캣", "샤머": "샤인머스캣", "화이트": "화이트발사믹" };
-const OV_OVERRIDE = [{ g: "오프아워", f: "라임브리즈", p: 328 }, { g: "오프아워", f: "피치릴렉서", p: 329 }, { g: "티카이브", f: "인진쑥차", p: 331 }, { g: "티카이브", f: "호박팥차", p: 355 }];
+// OV_OVERRIDE(맛별 고정 단가 4종)는 제거했다 — 4종 모두 원장에 실단가가 있고 고정값이 원가표 갱신을 덮었다(261002).
 const OV_LABELS = /(추천구성|실속구성|실속세트|최대할인|무료배송|맛보기팩|입문팩|비밀특가|비밀최저가|최저가|베스트|구성|세트|할인|배송|맛보기|입문|추천|실속|최대|비밀|특가|단독|최초|시크릿|벌크업|구매자한정|한정|선택|개당|행사|사은품|증정|best|new)/gi;
 const SP_ALIAS_E = { "애플": "애플블라스트", "레몬": "레몬부스트", "오렌지": "오렌지임팩트", "자몽": "시트러스버스트", "사우어베리": "사우어베리", "시트러스": "시트러스버스트" };
 const SP_ALIAS_P = { "자몽": "자몽", "이온자몽": "자몽", "머스캣리치": "머스캣리치", "머스캣": "머스캣리치", "이온머스캣": "머스캣리치", "리치": "머스캣리치" };
@@ -110,7 +110,7 @@ function ovPre(on) { return String(on).replace(/\[[^\]]*\]/g, " ").replace(/\(\s
 function ovCleanFl(p) { let f = String(p).replace(/\([^)]*\)/g, " ").replace(/[\[\]()*]/g, " ").replace(/[①②③④⑤⑥⑦⑧⑨]/g, " ").replace(OV_LABELS, " ").replace(/\d+\s*개입/g, " ").replace(/개입/g, " ").replace(/\d+\.\d+\s*(ml|l)?/gi, " ").replace(/\d+\s*(ml|l|종)\b/gi, " ").replace(/제로/g, "").replace(/[:：,·\-!?\/]/g, " ").replace(/\d+/g, " ").trim().replace(/\s+/g, ""); OV_GROUPS.forEach(g => { f = f.split(g).join(""); }); return f; }
 function ovIpName(pn) { const m = String(pn).match(/(\d+)\s*개입/); return m ? +m[1] : null; }
 function ovGrpOf(pn) { const pns = String(pn).replace(/\s/g, ""); return OV_GROUPS.find(g => pns.includes(g)) || null; }
-function ovGroups(cost) { OV_GROUPS = [...new Set(cost.map(c => c.grp).concat(OV_OVERRIDE.map(o => o.g)))].filter(Boolean).sort((a, b) => b.length - a.length); return OV_GROUPS; }
+function ovGroups(cost) { OV_GROUPS = [...new Set(cost.map(c => c.grp))].filter(Boolean).sort((a, b) => b.length - a.length); return OV_GROUPS; }
 function ovPieces(pn, on) {
   on = ovPre(on); const parts = on.split(/[\/+]/).map(x => x.trim()).filter(Boolean), res = [];
   parts.forEach(p => { const cm = p.match(/\((\d+)\s*개입\)/) || p.match(/(\d+)\s*개입/) || p.match(/(\d+)\s*$/) || p.match(/\((\d+)\)/) || p.match(/(\d+)/); let cnt = cm ? +cm[1] : null; const fl = ovCleanFl(p); if (!fl) return; res.push({ fl, cnt }); });
@@ -136,8 +136,7 @@ function ovDefaultSize(cand, psz) {
 function ovFlavorCost(pn, fl, cost, sp) {
   const grp = ovGrpOf(pn); if (!grp) return null;
   if (sp) return spFlavorCost(pn, fl);
-  const f = OV_ALIAS[fl] || fl; const pns = String(pn).replace(/\s/g, "");
-  const ov = OV_OVERRIDE.find(o => pns.includes(o.g) && f && (f.includes(o.f) || o.f.includes(f))); if (ov) return ov.p;
+  const f = OV_ALIAS[fl] || fl;
   let psz = ovSizeOf(pn); let cand = ovNoPet(ovSized(cost.filter(c => c.grp === grp), psz), pn); psz = ovDefaultSize(cand, psz); if (psz) { const z = cand.filter(c => c.ml === psz); if (z.length) cand = z; }
   if (!cand.length) return 0;
   const hits = cand.filter(c => c.flav && f && (f.includes(c.flav) || c.flav.includes(f)));

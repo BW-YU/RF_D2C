@@ -46,4 +46,9 @@ const se = parseCost([[0, 0, 0, "클룹_스프린트에너지,사우어베리,25
   [0, 0, 0, "클룹_스프린트에너지,레몬,500ml", 0, 0, 420]]);
 ovGroups(se);
 assert.equal(ovBoxCost("[시크릿 특가] 스프린트 에너지드링크 4종 골라담기", "개입 수=48개입#1", se, false).boxCost, Math.round((248 + 245) / 2) * 48);
+// 261002: 맛별 고정 단가(라임브리즈 328 등)를 없앴다 — 원장 단가를 쓴다.
+const oh = parseCost([[0, 0, 0, "[상온]클룹_오프아워,라임브리즈,350ml*1입", 0, 0, 351],
+  [0, 0, 0, "[상온]클룹_오프아워,피치릴렉서,350ml*1입", 0, 0, 352]]);
+ovGroups(oh);
+assert.equal(ovBoxCost("클룹 오프아워 350mL", "맛 선택=라임브리즈*24", oh, false).boxCost, 351 * 24);
 console.log("order_cost_daily_v2 tests: ok");
