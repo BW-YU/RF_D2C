@@ -35,7 +35,7 @@ const MALLS = ["cloop", "sprint"];
 
 // ===== 원가 상수 (api/report.js와 동일) =====
 const LEDGER_TABLE = "mart.rf_cost_ledger"; // 찐원가 유효기간 원장(effective_from·item_name·cost)
-const COST_UPDATE_TABLE = "ops_input.cost_update"; // 원가표 갱신분. 원장에 없는 신규 품목만 보충한다(261002)
+const COST_UPDATE_TABLE = "ops_input.cost_update"; // 원가표 갱신분. 원장에 없는 (품목, 적용 시작일) 단가를 보충한다(261002)
 const OV_SHIP = { 6: 2563, 12: 3237, 15: 3233, 20: 2905, 24: 3562 };
 const OV_ALIAS = { "사과": "오리지널", "헛개마카": "마카헛개", "샤인머스켓": "샤인머스캣", "샤머": "샤인머스캣", "화이트": "화이트발사믹" };
 const OV_OVERRIDE = [{ g: "오프아워", f: "라임브리즈", p: 328 }, { g: "오프아워", f: "피치릴렉서", p: 329 }, { g: "티카이브", f: "인진쑥차", p: 331 }, { g: "티카이브", f: "호박팥차", p: 355 }];
@@ -172,17 +172,21 @@ function addDaysStr(str, n) {
 // ===== 데이터 소스 =====
 // 찐원가 원장 로드 → item_name별 시점 단가 인덱스(오름차순 정렬 [{ef, cost}])
 async function readCostLedger(bq) {
-  // 원장은 수동 스냅샷이라 신규 SKU가 늦게 들어온다. 원장에 아예 없는 품목만 cost_update에서 보충한다
-  //   — 없으면 그룹 평균 폴백에 비캔 품목이 섞여 슈퍼포커스가 캔당 1,498원(실제 ~330원)으로 잡혔다(261002).
-  //   원장에 있는 품목의 단가는 건드리지 않는다.
+  // 원장은 8/31 수동 스냅샷이라 이후 원가표 갱신이 빠진다. 원장에 없는 (품목, 적용 시작일) 단가를 cost_update에서
+  //   보충한다 — 신규 SKU(슈퍼포커스가 그룹 평균 1,498원으로 잡히던 문제)와 기존 품목의 9월 갱신 모두(261002).
+  //   원장에 이미 있는 품목은 적용 시작일을 업로드한 달 1일 이후로 당긴다 — 9/16에 올라온 갱신분이 8/31 시작으로
+  //   적혀 있어도 8월(마감월)을 소급해 바꾸지 않는다(부문대표 261002 「9월 개시분은 9월에」). 신규 품목은 원래 날짜.
   const sql = "SELECT CAST(effective_from AS STRING) AS ef, item_name, cost " +
     "FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` " +
     "WHERE item_name IS NOT NULL AND cost IS NOT NULL AND cost > 0 " +
     "UNION ALL " +
-    "SELECT CAST(u.effective_from AS STRING), u.item_name, CAST(u.unit_cost AS FLOAT64) " +
+    "SELECT CAST(IF(EXISTS(SELECT 1 FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` k WHERE k.item_name = u.item_name), " +
+    "GREATEST(u.effective_from, DATE_TRUNC(DATE(u.uploaded_at, 'Asia/Seoul'), MONTH)), u.effective_from) AS STRING), " +
+    "u.item_name, CAST(u.unit_cost AS FLOAT64) " +
     "FROM `" + GCP_PROJECT + "." + COST_UPDATE_TABLE + "` u " +
-    "WHERE u.item_name IS NOT NULL AND u.unit_cost > 0 AND u.item_name NOT IN " +
-    "(SELECT item_name FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` WHERE item_name IS NOT NULL)";
+    "WHERE u.item_name IS NOT NULL AND u.unit_cost > 0 AND NOT EXISTS " +
+    "(SELECT 1 FROM `" + GCP_PROJECT + "." + LEDGER_TABLE + "` l WHERE l.item_name = u.item_name AND l.effective_from = u.effective_from) " +
+    "QUALIFY ROW_NUMBER() OVER (PARTITION BY u.item_name, u.effective_from ORDER BY u.uploaded_at DESC) = 1";
   const [rows] = await bq.query({ query: sql, location: BQ_LOCATION });
   const idx = new Map();
   rows.forEach(r => { const k = String(r.item_name); if (!idx.has(k)) idx.set(k, []); idx.get(k).push({ ef: String(r.ef), cost: +r.cost }); });
