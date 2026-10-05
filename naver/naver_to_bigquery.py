@@ -97,12 +97,22 @@ def _headers(acct, method, uri):
 def _get(acct, uri, params=None, max_retries=5):
     last = ""
     for attempt in range(max_retries):
-        r = requests.get(BASE_URL + uri, params=params,
-                         headers=_headers(acct, "GET", uri), timeout=60)
+        # 261006: 읽기 타임아웃·연결 끊김은 HTTP 응답이 없어 아래 재시도에 걸리지 않고 실행 전체를 죽였다
+        #   (10/2 14:00 `Read timed out`, 14일 300회 중 1회). HTTP 5xx와 같은 간격으로 재시도한다.
+        try:
+            r = requests.get(BASE_URL + uri, params=params,
+                             headers=_headers(acct, "GET", uri), timeout=60)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last = f"{type(exc).__name__}: {str(exc)[:300]}"
+            wait = min(60, 2 ** attempt * 2)
+            log.warning("network %s -> %d s retry (%d/%d)", type(exc).__name__, wait,
+                        attempt + 1, max_retries)
+            time.sleep(wait)
+            continue
         if r.status_code == 200:
             return r.json()
         last = r.text[:400]
-        if r.status_code in (429, 500, 502, 503):
+        if r.status_code in (429, 500, 502, 503, 504):
             wait = min(60, 2 ** attempt * 2)
             log.warning("HTTP %s -> %d s retry (%d/%d)", r.status_code, wait,
                         attempt + 1, max_retries)
