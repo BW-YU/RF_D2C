@@ -29,13 +29,16 @@ echo "Secret Manager에서 PAT 로드: ${SECRET_NAME}"
 PAT="$(gcloud secrets versions access latest --secret="${SECRET_NAME}" --project="${PROJECT}")"
 
 # ===== 잡 정의: "잡이름|스케줄(KST)|워크플로 파일" =====
-# 스케줄은 Asia/Seoul 기준. daily는 각 매체 원래 시각, hourly/intraday는 매시 정각.
+# 스케줄은 Asia/Seoul 기준. hourly/intraday는 매시 정각.
+# 261005: 데일리 대시보드 1차를 06:00(속보)으로 당기며 카페24·네이버·메타 일배치를 05:00, marts를 05:50으로 옮겼다.
+#   매체의 늦은 전환 귀속은 뒤쪽 재수집(메타 07:17·07:42 GitHub cron 등)과 12:30 확정 회차가 받는다.
 JOBS=(
-  "rf-meta-daily|0 7 * * *|meta_daily.yml"
-  "rf-naver-daily|0 6 * * *|naver_daily.yml"
+  "rf-meta-daily|0 5 * * *|meta_daily.yml"
+  "rf-naver-daily|0 5 * * *|naver_daily.yml"
   "rf-google-daily|0 7 * * *|google_daily.yml"
   "rf-ga4-daily|0 5 * * *|ga4_daily.yml"
-  "rf-cafe24-daily|0 6 * * *|cafe24_daily.yml"
+  "rf-cafe24-daily|0 5 * * *|cafe24_daily.yml"
+  "rf-marts-daily|50 5 * * *|marts_daily.yml"   # 261005: 05:00 일배치 뒤·06:00 데일리 대시보드 앞. GitHub cron은 30~60분 밀려 정시 보장이 안 된다
   "rf-meta-hourly|0 * * * *|meta_hourly.yml"
   "rf-naver-hourly|0 * * * *|naver_hourly.yml"
   "rf-ga4-intraday|0 * * * *|ga4_d0_intraday.yml"
