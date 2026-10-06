@@ -20,7 +20,7 @@ set -euo pipefail
 # ===== 설정 (환경변수로 덮어쓸 수 있음) =====
 PROJECT="${PROJECT:-rf-ads-db-500505}"           # Cloud Scheduler를 둘 GCP 프로젝트
 REGION="${REGION:-asia-northeast3}"              # 서울 리전
-REPO="${REPO:-cloop-collab/RF_D2C}"
+REPO="${REPO:-BW-YU/RF_D2C}"   # 261006: 실제 잡 대상(이전 기본값은 리다이렉트에 의존)
 TIMEZONE="${TIMEZONE:-Asia/Seoul}"               # KST로 직접 지정 (UTC 환산 불필요)
 SECRET_NAME="${SECRET_NAME:-github-pat-rf-d2c}"  # Secret Manager에 저장한 GitHub PAT 이름
 
@@ -37,7 +37,7 @@ JOBS=(
   "rf-naver-daily|0 5 * * *|naver_daily.yml"
   "rf-google-daily|0 7 * * *|google_daily.yml"
   "rf-ga4-daily|0 5 * * *|ga4_daily.yml"
-  "rf-cafe24-daily|0 5 * * *|cafe24_daily.yml"
+  "rf-cafe24-daily|40 4 * * *|cafe24_daily.yml"   # 261006: 소요 28~58분(실측) — 05:50 marts보다 항상 먼저 끝나게 04:40
   "rf-marts-daily|50 5 * * *|marts_daily.yml"   # 261005: 05:00 일배치 뒤·06:00 데일리 대시보드 앞. GitHub cron은 30~60분 밀려 정시 보장이 안 된다
   "rf-meta-hourly|0 * * * *|meta_hourly.yml"
   "rf-naver-hourly|0 * * * *|naver_hourly.yml"
