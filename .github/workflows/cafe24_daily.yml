@@ -1,8 +1,8 @@
 name: Cafe24 to BigQuery Daily
 
 on:
-  schedule:
-    - cron: "0 21 * * *"   # 매일 06:00 KST (= 21:00 UTC), 네이버와 동일 시간대
+  # 261007: GitHub 예약 제거 — Cloud Scheduler rf-cafe24-daily(04:40)·rf-cafe24-daily-confirm(11:20)이 정본.
+  #   기존 06:00 예약은 퇴사자 계정 소유라 09-06부터 startup_failure였고, 살리면 06:00 데일리 빌드 중에 재적재가 겹친다.
   workflow_dispatch:
     inputs:
       backfill_days:

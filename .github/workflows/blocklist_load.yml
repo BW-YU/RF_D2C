@@ -5,7 +5,7 @@ name: 수신거부(BLOCKLIST) 시트 적재
 
 on:
   schedule:
-    - cron: "30 21 * * *"   # 매일 06:30 KST
+    - cron: "30 21 * * *"   # 매일 06:30 KST  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소)
   workflow_dispatch:
 
 jobs:

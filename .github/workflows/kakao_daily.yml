@@ -1,12 +1,13 @@
 name: Kakao Moment to BigQuery Daily
 
 on:
-  schedule:
-    # 하루 4회(KST) — 06/12/18/00시. 정각 혼잡 회피 위해 :07분. (KST=UTC+9)
-    - cron: "7 21 * * *"   # 06:07 KST
-    - cron: "7 3 * * *"    # 12:07 KST
-    - cron: "7 9 * * *"    # 18:07 KST
-    - cron: "7 15 * * *"   # 00:07 KST
+  # 261007: 카카오 모먼트 광고 중단(08-31~) 동안 예약 정지 — 퇴사자 계정 소유 예약이라 09-06부터 startup_failure였다.
+  #   광고 재개 시 아래 주석을 풀어 BW-YU 명의로 다시 커밋한다(대시보드 KAKAO_ADS_ACTIVE=True 재배선과 함께).
+  # schedule:
+  #   - cron: "7 21 * * *"   # 06:07 KST
+  #   - cron: "7 3 * * *"    # 12:07 KST
+  #   - cron: "7 9 * * *"    # 18:07 KST
+  #   - cron: "7 15 * * *"   # 00:07 KST
   workflow_dispatch:
     inputs:
       backfill_days:

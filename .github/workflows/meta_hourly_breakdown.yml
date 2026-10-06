@@ -6,8 +6,8 @@ name: Meta Hourly-of-day to BigQuery (rf_meta_ads_hourly)
 
 on:
   schedule:
-    - cron: "30 22 * * *"   # 07:30 KST (전일 확정)
-    - cron: "30 9 * * *"    # 18:30 KST (당일 시간대 갱신)
+    - cron: "30 22 * * *"   # 07:30 KST (전일 확정)  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소)
+    - cron: "30 9 * * *"    # 18:30 KST (당일 시간대 갱신)  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소)
   workflow_dispatch:
     inputs:
       since:
