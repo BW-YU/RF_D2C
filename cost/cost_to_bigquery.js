@@ -143,6 +143,12 @@ function ovFlavorCost(pn, fl, cost, sp) {
   if (hits.length) { const np = hits.filter(c => !c.pet); return (np[0] || hits[0]).price; }
   return Math.round(cand.reduce((a, b) => a + b.price, 0) / cand.length);
 }
+// 261006: 주문명에 용량이 없으면 같은 상품의 과거 용량 표기명(catalogName)으로 원가 단가를 고른다(딜·브랜드 분류엔 미사용).
+function sizedName(pn, catalogName) {
+  if (ovSizeOf(pn) || !catalogName) return pn;
+  const z = ovSizeOf(String(catalogName));
+  return z ? `${pn} ${z}ml` : pn;
+}
 function ovBoxCost(pn, on, cost, sp) {
   if (!ovGrpOf(pn)) return null;
   if (sp) return spBoxCost(pn, on);
@@ -206,13 +212,17 @@ function sheetForDate(idx, dateStr) {
   return out;
 }
 async function optionRows(bq, start, end) {
+  // 261006: v3와 같은 용량 보충 — 같은 몰·상품번호의 과거 주문명 중 용량이 적힌 최근 이름(catalogName).
   const sql =
-    "SELECT report_date AS date, mall AS mallId, product_name AS productName, " +
-    "JSON_VALUE(raw_json,'$.option_value') AS optionName, " +
-    "SUM(quantity) AS saleCount " +
-    "FROM `" + SRC_TABLE + "` " +
-    "WHERE mall IN ('cloop','sprint') AND report_date BETWEEN '" + start + "' AND '" + end + "' " +
-    "AND IFNULL(JSON_VALUE(raw_json,'$.status_code'),'') NOT LIKE 'C%' " +
+    "WITH catalog AS (SELECT mall, CAST(product_no AS STRING) product_no, product_name catalog_name FROM `" + SRC_TABLE + "` " +
+    "WHERE mall IN ('cloop','sprint') AND REGEXP_CONTAINS(product_name, r'(?i)[0-9]+(\\.[0-9]+)?\\s*(ml|l)\\b') " +
+    "QUALIFY ROW_NUMBER() OVER (PARTITION BY mall, CAST(product_no AS STRING) ORDER BY report_date DESC) = 1) " +
+    "SELECT i.report_date AS date, i.mall AS mallId, i.product_name AS productName, ANY_VALUE(c.catalog_name) AS catalogName, " +
+    "JSON_VALUE(i.raw_json,'$.option_value') AS optionName, " +
+    "SUM(i.quantity) AS saleCount " +
+    "FROM `" + SRC_TABLE + "` i LEFT JOIN catalog c ON c.mall = i.mall AND c.product_no = CAST(i.product_no AS STRING) " +
+    "WHERE i.mall IN ('cloop','sprint') AND i.report_date BETWEEN '" + start + "' AND '" + end + "' " +
+    "AND IFNULL(JSON_VALUE(i.raw_json,'$.status_code'),'') NOT LIKE 'C%' " +
     "GROUP BY date, mallId, productName, optionName";
   // 날짜는 자체 계산 YYYY-MM-DD(주입위험 없음). 명명 DATE 파라미터가 Node 클라이언트에서 0행 매칭되던 이슈 회피용 인라인.
   const [rows] = await bq.query({ query: sql, location: BQ_LOCATION });
@@ -235,7 +245,7 @@ function computeDaily(orows, idx) {
       const box = +r.saleCount || 0; if (box === 0) return; // 음수(취소/환불)도 포함해 차감(현재는 C% 제외라 양수)
       const mall = String(r.mallId || "");
       const sp = mall === "sprint";
-      const bc = ovBoxCost(pn, on, cost, sp); if (bc == null) return; // 제품군 미인식 → 원가 미산입(정상 1~2%)
+      const bc = ovBoxCost(sizedName(pn, r.catalogName), on, cost, sp); if (bc == null) return; // 제품군 미인식 → 원가 미산입(정상 1~2%)
       const rate = shipRateForCans(bc.cans, bc.pieces > 1, pn);
       const k = d + "|" + mall; const b = acc[k] || (acc[k] = { date: d, mall, cogs: 0, ship: 0 });
       b.cogs += box * bc.boxCost; b.ship += box * rate;
@@ -324,6 +334,7 @@ if (require.main === module) {
 // v2 주문단위 계산기가 검증된 동일 파서를 재사용한다. legacy 적재 동작은 그대로 유지한다.
 module.exports = {
   ovSizeOf,
+  sizedName,
   parseCost,
   ovGroups,
   ovBoxCost,

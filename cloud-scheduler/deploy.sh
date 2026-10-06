@@ -38,7 +38,9 @@ JOBS=(
   "rf-google-daily|0 7 * * *|google_daily.yml"
   "rf-ga4-daily|0 5 * * *|ga4_daily.yml"
   "rf-cafe24-daily|40 4 * * *|cafe24_daily.yml"   # 261006: 소요 28~58분(실측) — 05:50 marts보다 항상 먼저 끝나게 04:40
+  "rf-cafe24-daily-confirm|20 11 * * *|cafe24_daily.yml"   # 261006: 04:40엔 D-1 통계(방문·유입)가 미완결일 수 있어 12:30 확정 전 재수집(최대 58분 → 12:18)
   "rf-marts-daily|50 5 * * *|marts_daily.yml"   # 261005: 05:00 일배치 뒤·06:00 데일리 대시보드 앞. GitHub cron은 30~60분 밀려 정시 보장이 안 된다
+  "rf-marts-daily-confirm|20 12 * * *|marts_daily.yml"   # 261006: 11:20 카페24 재수집 뒤·12:30 확정 회차 앞
   "rf-meta-hourly|0 * * * *|meta_hourly.yml"
   "rf-naver-hourly|0 * * * *|naver_hourly.yml"
   "rf-ga4-intraday|0 * * * *|ga4_d0_intraday.yml"
