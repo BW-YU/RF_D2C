@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const { BigQuery } = require("@google-cloud/bigquery");
 const {
-  ovSizeOf, parseCost, ovGroups, ovBoxCost, sheetForDate, readCostLedger,
+  ovSizeOf, sizedName, parseCost, ovGroups, ovBoxCost, sheetForDate, readCostLedger,
   kstDateStr, addDaysStr,
 } = require("./cost_to_bigquery");
 
@@ -113,15 +113,7 @@ function rateAsOf(card, date, type, units, mixed) {
   return cost > 0 && remain === 0 ? { cost, exact: false } : null;
 }
 
-// 261006 Fable 감사: 주문 당시 상품명에 용량이 없으면(「[시크릿 특가] 스프린트 에너지드링크 4종 최저가로 골라담기」)
-//   그룹 최다 용량(250mL)으로 잡혀 캔당 원가가 42% 과소였다. 같은 몰·같은 상품번호로 과거에 팔린 이름 중 용량이 적힌
-//   것(「[썸머블프 특가] 스프린트 에너지 500mL 4종」)이 있으면 원가 단가 선택에만 그 용량을 쓴다 — 딜·브랜드는 주문 당시 이름 그대로다.
-function sizedName(pn, catalogName) {
-  if (ovSizeOf(pn) || !catalogName) return pn;
-  const z = ovSizeOf(String(catalogName));
-  return z ? `${pn} ${z}ml` : pn;
-}
-
+// 261006: 용량 보충 sizedName은 cost_to_bigquery.js 공용(레거시·v3 같은 규칙). 근거는 그 주석 참고.
 function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
   const byDate = new Map();
   for (const r of rawRows) {
