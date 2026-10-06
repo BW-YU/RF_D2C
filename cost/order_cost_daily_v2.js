@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const { BigQuery } = require("@google-cloud/bigquery");
 const {
-  parseCost, ovGroups, ovBoxCost, sheetForDate, readCostLedger,
+  ovSizeOf, parseCost, ovGroups, ovBoxCost, sheetForDate, readCostLedger,
   kstDateStr, addDaysStr,
 } = require("./cost_to_bigquery");
 
@@ -113,6 +113,15 @@ function rateAsOf(card, date, type, units, mixed) {
   return cost > 0 && remain === 0 ? { cost, exact: false } : null;
 }
 
+// 261006 Fable 감사: 주문 당시 상품명에 용량이 없으면(「[시크릿 특가] 스프린트 에너지드링크 4종 최저가로 골라담기」)
+//   그룹 최다 용량(250mL)으로 잡혀 캔당 원가가 42% 과소였다. 같은 몰·같은 상품번호로 과거에 팔린 이름 중 용량이 적힌
+//   것(「[썸머블프 특가] 스프린트 에너지 500mL 4종」)이 있으면 원가 단가 선택에만 그 용량을 쓴다 — 딜·브랜드는 주문 당시 이름 그대로다.
+function sizedName(pn, catalogName) {
+  if (ovSizeOf(pn) || !catalogName) return pn;
+  const z = ovSizeOf(String(catalogName));
+  return z ? `${pn} ${z}ml` : pn;
+}
+
 function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
   const byDate = new Map();
   for (const r of rawRows) {
@@ -157,7 +166,7 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
         const qty = Number(r.quantity || 0); a.item_line_count++; a.item_quantity += Math.max(qty, 0);
         const pn = String(r.productName || ""), on = String(r.optionName || "");
         a.net_revenue += Number(r.allocatedNet || 0);
-        const parsed = ovBoxCost(pn, on, costs, order.mall === "sprint");
+        const parsed = ovBoxCost(sizedName(pn, r.catalogName), on, costs, order.mall === "sprint");
         const dm = parsed ? dealFor(pn, on, order.mall, date, parsed.cans,
           Number(r.allocatedNet || 0) * 1.1 / Math.max(qty, 1), priceLog)
           : { deal: "오가닉", brand: brandOf(pn, on), exact: false };
@@ -213,6 +222,14 @@ async function sourceRows(bq, start, end, basis = "shipped") {
     WHERE mall IN ('cloop','sprint')
       ${orderBasis ? "" : `AND DATE(TIMESTAMP(JSON_VALUE(raw_json,'$.shipped_date')),'Asia/Seoul') BETWEEN '${start}' AND '${end}'`}
       AND IFNULL(JSON_VALUE(raw_json,'$.status_code'),'') NOT LIKE 'C%'
+  ), catalog AS (
+    -- 같은 몰·같은 상품번호로 과거에 팔린 이름 중 용량이 적힌 가장 최근 이름. 상품명이 바뀌며 용량이 빠진 경우
+    -- (클룹 462 「[썸머블프 특가] 스프린트 에너지 500mL 4종」→「[시크릿 특가] 스프린트 에너지드링크 4종 …골라담기」)를 잇는다.
+    -- 현재 카탈로그명은 이미 용량이 빠져 있을 수 있어 쓰지 않는다(몰이 다르면 같은 번호가 다른 상품이다).
+    SELECT mall, CAST(product_no AS STRING) product_no, product_name catalog_name
+    FROM \`${PROJECT}.${SOURCE}\`
+    WHERE mall IN ('cloop','sprint') AND REGEXP_CONTAINS(product_name, r'(?i)[0-9]+(\\.[0-9]+)?\\s*(ml|l)\\b')
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY mall, CAST(product_no AS STRING) ORDER BY report_date DESC) = 1
   ), orders AS (
     SELECT mall,order_id, DATE(ordered_at,'Asia/Seoul') order_date,
       SAFE_CAST(JSON_VALUE(raw_json,'$.actual_order_amount.order_price_amount') AS FLOAT64)/1.1 order_net
@@ -224,10 +241,11 @@ async function sourceRows(bq, start, end, basis = "shipped") {
     DATE(TIMESTAMP(JSON_VALUE(i.raw_json,'$.delivered_date')),'Asia/Seoul') AS deliveredDate,
     i.mall AS mallId, i.order_id AS orderId,
     JSON_VALUE(raw_json,'$.order_item_code') AS orderItemCode,
-    product_name AS productName,
+    product_name AS productName, c.catalog_name AS catalogName,
     COALESCE(JSON_VALUE(raw_json,'$.option_value'), JSON_VALUE(raw_json,'$.option_value_default')) AS optionName,
     quantity, o.order_net*SAFE_DIVIDE(line_weight,SUM(line_weight) OVER(PARTITION BY i.mall,i.order_id)) AS allocatedNet
-    FROM items i JOIN orders o USING(mall,order_id)`;
+    FROM items i JOIN orders o USING(mall,order_id)
+    LEFT JOIN catalog c ON c.mall = i.mall AND c.product_no = CAST(i.product_no AS STRING)`;
   const [rows] = await bq.query({ query: sql, location: LOCATION }); return rows;
 }
 
@@ -301,4 +319,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(e => { console.error("[cost-v2] 실패:", e && e.stack || e); process.exit(1); });
-module.exports = { csvCells, dateValue, loadRatecard, brandOf, priceBrand, dealFor, productType, rateAsOf, computeDaily };
+module.exports = { sizedName, csvCells, dateValue, loadRatecard, brandOf, priceBrand, dealFor, productType, rateAsOf, computeDaily };

@@ -323,6 +323,7 @@ if (require.main === module) {
 
 // v2 주문단위 계산기가 검증된 동일 파서를 재사용한다. legacy 적재 동작은 그대로 유지한다.
 module.exports = {
+  ovSizeOf,
   parseCost,
   ovGroups,
   ovBoxCost,
