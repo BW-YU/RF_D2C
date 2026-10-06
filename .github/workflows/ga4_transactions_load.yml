@@ -2,7 +2,7 @@ name: GA4 Transactions to BigQuery
 
 on:
   schedule:
-    - cron: '20 20 * * *'   # 매일 05:20 KST (rf_ga4 daily 이후)
+    - cron: '20 20 * * *'   # 매일 05:20 KST (rf_ga4 daily 이후)  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소)
   workflow_dispatch:
     inputs:
       backfill_days:
