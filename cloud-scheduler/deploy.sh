@@ -46,6 +46,12 @@ JOBS=(
   "rf-ga4-intraday|0 * * * *|ga4_d0_intraday.yml"
   "rf-google-intraday|0 * * * *|google_intraday.yml"
   "rf-cafe24-intraday|0 * * * *|cafe24_d0_intraday.yml"
+  # 261007: 퇴사자 계정 명의 GitHub cron이 09-06부터 startup_failure였고, BW-YU로 이관(#70·#71)한 뒤에도
+  #   10/7 18:31 예약이 GitHub에서 아예 생성되지 않았다(실패 기록도 없음). 정시 보장을 위해 Cloud Scheduler로 옮긴다.
+  "rf-ga4-items-daily|11 5 * * *|ga4_items_daily.yml"
+  "rf-ga4-transactions-daily|21 5 * * *|ga4_transactions_load.yml"
+  "rf-blocklist-daily|31 6 * * *|blocklist_load.yml"
+  "rf-meta-hourly-breakdown|31 7,18 * * *|meta_hourly_breakdown.yml"
   # "rf-meta-audit|0 * * * *|meta_audit.yml"   # 현재 GitHub에서 수동 비활성 상태. 되살리려면 주석 해제.
 )
 
