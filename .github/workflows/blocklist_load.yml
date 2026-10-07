@@ -4,8 +4,7 @@ name: 수신거부(BLOCKLIST) 시트 적재
 # 전제: 시트를 rf-mkt@rf-ads-db-500505.iam.gserviceaccount.com 에 '뷰어' 공유.
 
 on:
-  schedule:
-    - cron: "31 21 * * *"   # 매일 06:31 KST  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소 — 주석만 바꾸면 실행 주체가 안 바뀌어 시각을 1분 옮김)
+  # 261007: 예약은 Cloud Scheduler(cloud-scheduler/deploy.sh)가 workflow_dispatch로 호출한다 — GitHub cron은 제거(중복·누락 방지).
   workflow_dispatch:
 
 jobs:
