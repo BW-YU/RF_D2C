@@ -2,7 +2,7 @@ name: GA4 Items to BigQuery Daily
 
 on:
   schedule:
-    - cron: '10 20 * * *'   # 매일 05:10 KST (ga4_daily 5:00 뒤)  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소)
+    - cron: '11 20 * * *'   # 매일 05:11 KST (ga4_daily 5:00 뒤)  # 261007 BW-YU 이관(퇴사자 계정 예약 실행 startup_failure 해소 — 주석만 바꾸면 실행 주체가 안 바뀌어 시각을 1분 옮김)
   workflow_dispatch:
     inputs:
       backfill_days:
