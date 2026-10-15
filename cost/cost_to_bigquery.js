@@ -165,6 +165,27 @@ function ovBoxCost(pn, on, cost, sp) {
   return { boxCost, cans, pieces: ps.length };
 }
 
+// 261016 다브랜드 골라담기(클룹 593 「[한정판매] 베스트 제품 내맘대로 골라담기」): 상품명에 브랜드 그룹이 없고
+//   실제 구성은 추가옵션 「맛 선택=애사비소다 사이다*12 / 오프아워 자몽피즈*12 …」에만 있다. ovBoxCost는 상품명 그룹이
+//   없으면 null이라 이 딜 줄이 통째로 원가 미매칭 → 10-13·15 원가 연결률 94~95%로 신뢰선 미달 → 화면이 마감률 폴백.
+//   조각마다 「그룹+맛*수량」을 읽어 조각 자체를 상품명처럼 그룹·용량·맛 단가를 고른다. 조각 하나라도 그룹·수량을 못 읽으면 null.
+function ovMixedBoxCost(addOption, cost) {
+  const body = String(addOption || "").replace(/^[^=]*=/, "");
+  const parts = body.split(/\s*\/\s*/).map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  let boxCost = 0, cans = 0;
+  for (const part of parts) {
+    const m = part.match(/^(.*?)\s*[*xX×]\s*(\d+)\s*$/);
+    if (!m) return null;
+    const text = m[1], cnt = +m[2];
+    if (!ovGrpOf(text) || !(cnt > 0)) return null;
+    const unit = ovFlavorCost(text, ovCleanFl(text), cost, false);
+    if (!(unit > 0)) return null;
+    boxCost += unit * cnt; cans += cnt;
+  }
+  return { boxCost, cans, pieces: parts.length };
+}
+
 // ===== 날짜 (KST) =====
 function kstDateStr(d) {
   const k = new Date(d.getTime() + 9 * 3600 * 1000);
@@ -338,6 +359,7 @@ module.exports = {
   parseCost,
   ovGroups,
   ovBoxCost,
+  ovMixedBoxCost,
   sheetForDate,
   readCostLedger,
   kstDateStr,

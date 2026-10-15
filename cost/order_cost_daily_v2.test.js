@@ -62,3 +62,21 @@ const se5 = parseCost([[0, 0, 0, "클룹_스프린트에너지,사우어베리,2
 ovGroups(se5);
 assert.equal(ovBoxCost(sizedName("[시크릿 특가] 스프린트 에너지드링크 4종 최저가로 골라담기", "스프린트 에너지 500mL 4종"), "개입 수=48개입#1", se5, false).boxCost, 425 * 48);
 console.log("order_cost_daily_v2 tests: ok");
+// 261016: 다브랜드 골라담기(클룹 593) — 상품명에 그룹이 없고 구성은 추가옵션에만 있다. 조각별 그룹·맛 단가로 원가를 낸다.
+const { ovMixedBoxCost } = require("./cost_to_bigquery");
+const mix = parseCost([[0, 0, 0, "[상온]클룹_애사비소다,사이다,250ml*1입", 0, 0, 290],
+  [0, 0, 0, "[상온]클룹_애사비소다,콜라,250ml*1입", 0, 0, 295],
+  [0, 0, 0, "[상온]클룹_오프아워,자몽피즈,355ml*1입", 0, 0, 360]]);
+ovGroups(mix);
+assert.deepEqual(ovMixedBoxCost("맛 선택=애사비소다 사이다*12 / 오프아워 자몽피즈*36", mix), { boxCost: 290 * 12 + 360 * 36, cans: 48, pieces: 2 });
+assert.equal(ovMixedBoxCost("맛 선택=애사비소다 사이다*12 / 알수없는음료*12", mix), null);   // 한 조각이라도 못 읽으면 미매칭으로 남긴다
+assert.equal(ovMixedBoxCost("맛 선택=애사비소다 사이다", mix), null);                           // 수량 없는 조각
+assert.equal(ovBoxCost("[한정판매] 베스트 제품 내맘대로 골라담기", "구성=48개입#1", mix, false), null);
+const d593 = computeDaily([{ date: "2026-10-15", orderDate: "2026-10-15", mallId: "cloop", orderId: "o593",
+  productName: "[한정판매] 베스트 제품 내맘대로 골라담기", optionName: "구성=48개입#1",
+  addOption: "맛 선택=애사비소다 콜라*24 / 오프아워 자몽피즈*24", quantity: 1, allocatedNet: 30000 }],
+  new Map([["[상온]클룹_애사비소다,콜라,250ml*1입", [{ ef: "2026-01-01", cost: 295 }]],
+           ["[상온]클룹_오프아워,자몽피즈,355ml*1입", [{ ef: "2026-01-01", cost: 360 }]]]), card, []);
+assert.equal(d593[0].cost_coverage, 1);
+assert.equal(d593[0].cogs, 295 * 24 + 360 * 24);
+console.log("order_cost_daily_v2 tests OK");

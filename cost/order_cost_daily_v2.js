@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const { BigQuery } = require("@google-cloud/bigquery");
 const {
-  ovSizeOf, sizedName, parseCost, ovGroups, ovBoxCost, sheetForDate, readCostLedger,
+  ovSizeOf, sizedName, parseCost, ovGroups, ovBoxCost, ovMixedBoxCost, sheetForDate, readCostLedger,
   kstDateStr, addDaysStr,
 } = require("./cost_to_bigquery");
 
@@ -23,8 +23,8 @@ const SOURCE = "cafe24.rf_cafe24_order_items_current";
 const TARGET = "mart.dtc_order_cost_daily_v2";
 const ORDER_TARGET = "mart.dtc_order_cost_daily_v3";
 const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 3);
-const ENGINE_VERSION = "order-cost-v2.1.0";
-const ORDER_ENGINE_VERSION = "order-cost-v3.0.0";
+const ENGINE_VERSION = "order-cost-v2.2.0";
+const ORDER_ENGINE_VERSION = "order-cost-v3.1.0";
 const COST_MIN_COVERAGE = Number(process.env.COST_MIN_COVERAGE || 0.95);
 const SHIP_MIN_COVERAGE = Number(process.env.SHIP_MIN_COVERAGE || 0.95);
 
@@ -158,7 +158,9 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
         const qty = Number(r.quantity || 0); a.item_line_count++; a.item_quantity += Math.max(qty, 0);
         const pn = String(r.productName || ""), on = String(r.optionName || "");
         a.net_revenue += Number(r.allocatedNet || 0);
-        const parsed = ovBoxCost(sizedName(pn, r.catalogName), on, costs, order.mall === "sprint");
+        // 261016: 상품명에 그룹이 없는 다브랜드 골라담기는 추가옵션 구성으로 원가를 낸다(ovMixedBoxCost 주석).
+        const parsed = ovBoxCost(sizedName(pn, r.catalogName), on, costs, order.mall === "sprint")
+          || (order.mall !== "sprint" && r.addOption ? ovMixedBoxCost(r.addOption, costs) : null);
         const dm = parsed ? dealFor(pn, on, order.mall, date, parsed.cans,
           Number(r.allocatedNet || 0) * 1.1 / Math.max(qty, 1), priceLog)
           : { deal: "오가닉", brand: brandOf(pn, on), exact: false };
@@ -235,6 +237,7 @@ async function sourceRows(bq, start, end, basis = "shipped") {
     JSON_VALUE(raw_json,'$.order_item_code') AS orderItemCode,
     product_name AS productName, c.catalog_name AS catalogName,
     COALESCE(JSON_VALUE(raw_json,'$.option_value'), JSON_VALUE(raw_json,'$.option_value_default')) AS optionName,
+    JSON_VALUE(raw_json,'$.additional_option_value') AS addOption,
     quantity, o.order_net*SAFE_DIVIDE(line_weight,SUM(line_weight) OVER(PARTITION BY i.mall,i.order_id)) AS allocatedNet
     FROM items i JOIN orders o USING(mall,order_id)
     LEFT JOIN catalog c ON c.mall = i.mall AND c.product_no = CAST(i.product_no AS STRING)`;
