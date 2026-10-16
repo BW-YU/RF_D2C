@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const { BigQuery } = require("@google-cloud/bigquery");
 const {
-  ovSizeOf, sizedName, parseCost, ovGroups, ovBoxCost, ovMixedBoxCost, sheetForDate, readCostLedger,
+  ovSizeOf, sizedName, parseCost, ovGroups, ovBoxCost, ovMixedBoxCost, ovShortBoxCost, sheetForDate, readCostLedger,
   kstDateStr, addDaysStr,
 } = require("./cost_to_bigquery");
 
@@ -23,8 +23,8 @@ const SOURCE = "cafe24.rf_cafe24_order_items_current";
 const TARGET = "mart.dtc_order_cost_daily_v2";
 const ORDER_TARGET = "mart.dtc_order_cost_daily_v3";
 const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 3);
-const ENGINE_VERSION = "order-cost-v2.2.0";
-const ORDER_ENGINE_VERSION = "order-cost-v3.1.0";
+const ENGINE_VERSION = "order-cost-v2.3.0";
+const ORDER_ENGINE_VERSION = "order-cost-v3.2.0";
 const COST_MIN_COVERAGE = Number(process.env.COST_MIN_COVERAGE || 0.95);
 const SHIP_MIN_COVERAGE = Number(process.env.SHIP_MIN_COVERAGE || 0.95);
 
@@ -160,7 +160,8 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
         a.net_revenue += Number(r.allocatedNet || 0);
         // 261016: 상품명에 그룹이 없는 다브랜드 골라담기는 추가옵션 구성으로 원가를 낸다(ovMixedBoxCost 주석).
         const parsed = ovBoxCost(sizedName(pn, r.catalogName), on, costs, order.mall === "sprint")
-          || (order.mall !== "sprint" && r.addOption ? ovMixedBoxCost(r.addOption, costs) : null);
+          || (order.mall !== "sprint" && r.addOption ? ovMixedBoxCost(r.addOption, costs) : null)
+          || (order.mall !== "sprint" ? ovShortBoxCost(pn, on, costs) : null);   // 261017 공구 짧은 맛 이름(ovShortBoxCost 주석)
         const dm = parsed ? dealFor(pn, on, order.mall, date, parsed.cans,
           Number(r.allocatedNet || 0) * 1.1 / Math.max(qty, 1), priceLog)
           : { deal: "오가닉", brand: brandOf(pn, on), exact: false };
