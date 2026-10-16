@@ -80,3 +80,15 @@ const d593 = computeDaily([{ date: "2026-10-15", orderDate: "2026-10-15", mallId
 assert.equal(d593[0].cost_coverage, 1);
 assert.equal(d593[0].cogs, 295 * 24 + 360 * 24);
 console.log("order_cost_daily_v2 tests OK");
+// 261017: 유주얌 6차 공구 — 상품명·조각에 그룹이 없는 짧은 맛 이름(사과12 + 감귤12 …). 정확히 아는 맛만 그룹을 붙인다.
+const { ovShortBoxCost } = require("./cost_to_bigquery");
+const yjm = parseCost([[0, 0, 0, "[상온]클룹_애사비소다,오리지널,500ml*1입", 0, 0, 290], [0, 0, 0, "[상온]클룹_애사비소다,오리지널,500ml*1입 페트", 0, 0, 126],
+  [0, 0, 0, "[상온]클룹_애사비소다,콜라,500ml*1입", 0, 0, 296], [0, 0, 0, "[상온]클룹_오프아워,피치릴렉서,350ml*1입", 0, 0, 340],
+  [0, 0, 0, "[상온]클룹_제로소다,레몬,250ml*1입", 0, 0, 227]]);
+ovGroups(yjm);
+const YP = "[유주얌 6차 마켓] 클룹 베스트셀러 특가";
+assert.deepEqual(ovShortBoxCost(YP, "유주얌 전용 특가=[BEST/48개입] 사과24 + 콜라24", yjm), { boxCost: 290 * 24 + 296 * 24, cans: 48, pieces: 2 });  // 캔 단가(페트 제외)
+assert.deepEqual(ovShortBoxCost(YP, "유주얌 전용 특가=[혼합/24개입] 피치릴렉서24", yjm), { boxCost: 340 * 24, cans: 24, pieces: 1 });
+assert.equal(ovShortBoxCost(YP, "유주얌 전용 특가=[48개입] 사과24 + 바나나24", yjm), null);   // 모르는 맛 하나라도 있으면 미매칭
+assert.equal(ovShortBoxCost("애사비소다 사과 500ml", "사과12", yjm), null);                     // 상품명에 그룹이 있으면 기존 경로
+console.log("order_cost_daily_v2 short-flavor tests OK");

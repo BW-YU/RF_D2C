@@ -41,7 +41,8 @@ const OV_ALIAS = { "사과": "오리지널", "헛개마카": "마카헛개", "�
 // OV_OVERRIDE(맛별 고정 단가 4종)는 제거했다 — 4종 모두 원장에 실단가가 있고 고정값이 원가표 갱신을 덮었다(261002).
 const OV_LABELS = /(추천구성|실속구성|실속세트|최대할인|무료배송|맛보기팩|입문팩|비밀특가|비밀최저가|최저가|베스트|구성|세트|할인|배송|맛보기|입문|추천|실속|최대|비밀|특가|단독|최초|시크릿|벌크업|구매자한정|한정|선택|개당|행사|사은품|증정|best|new)/gi;
 const SP_ALIAS_E = { "애플": "애플블라스트", "레몬": "레몬부스트", "오렌지": "오렌지임팩트", "자몽": "시트러스버스트", "사우어베리": "사우어베리", "시트러스": "시트러스버스트" };
-const SP_ALIAS_P = { "자몽": "자몽", "이온자몽": "자몽", "머스캣리치": "머스캣리치", "머스캣": "머스캣리치", "이온머스캣": "머스캣리치", "리치": "머스캣리치" };
+// 261017: 「스프린트 이온 머스캣리치48」 토큰은 「이온머스캣리치」로 읽혀 별칭이 없어 단가 0 → 08-08 스프린트몰 원가 미매칭.
+const SP_ALIAS_P = { "자몽": "자몽", "이온자몽": "자몽", "머스캣리치": "머스캣리치", "머스캣": "머스캣리치", "이온머스캣": "머스캣리치", "이온머스캣리치": "머스캣리치", "리치": "머스캣리치", "이온리치": "머스캣리치" };
 const SP_GIFT = 33378;
 
 let OV_GROUPS = [];
@@ -184,6 +185,29 @@ function ovMixedBoxCost(addOption, cost) {
     boxCost += unit * cnt; cans += cnt;
   }
   return { boxCost, cans, pieces: parts.length };
+}
+
+// 261017 공구 짧은 맛 이름(유주얌 6차 「[유주얌 6차 마켓] 클룹 베스트셀러 특가」 옵션 「[BEST/48개입] 사과12 + 감귤12 + 콜라12 + 자두12」):
+//   상품명·조각 어디에도 브랜드 그룹이 없어 08-25~29 클룹 원가 연결률 87~95%(화면 마감률 폴백). 구성은 공구 스킴
+//   (groupbuy_margin.tsv 「애사비소다 12종, 오프아워」)대로 애사비소다 500mL 캔·오프아워 350mL다. 조각의 맛 이름이 아래 표에
+//   **정확히** 있을 때만 그룹을 붙이고(부분 일치 금지 — 레몬·복숭아는 제로소다·원더팝에도 있다), 조각 하나라도 없으면 null.
+const OV_SHORT = {
+  "사과": "애사비소다 오리지널", "매실": "애사비소다 매실", "감귤": "애사비소다 제주감귤", "패션": "애사비소다 패션후르츠",
+  "패션후르츠": "애사비소다 패션후르츠", "콜라": "애사비소다 콜라", "자두": "애사비소다 자두", "레몬": "애사비소다 레몬비니거",
+  "복숭아": "애사비소다 신비복숭아", "체리": "애사비소다 타트체리", "리치": "애사비소다 리치", "망고": "애사비소다 망고",
+  "피치릴렉서": "오프아워 피치릴렉서", "라임브리즈": "오프아워 라임브리즈",
+};
+function ovShortBoxCost(pn, on, cost) {
+  if (ovGrpOf(pn)) return null;
+  const ps = ovPieces(pn, String(on || "").replace(/^[^=]*=/, "")); if (!ps.length) return null;   // 「유주얌 전용 특가=」 키 제거
+  let boxCost = 0, cans = 0;
+  for (const p of ps) {
+    const text = OV_SHORT[p.fl]; if (!text || !(p.cnt > 0)) return null;
+    const unit = ovFlavorCost(text, ovCleanFl(text), cost, false);
+    if (!(unit > 0)) return null;
+    boxCost += unit * p.cnt; cans += p.cnt;
+  }
+  return { boxCost, cans, pieces: ps.length };
 }
 
 // ===== 날짜 (KST) =====
@@ -360,6 +384,7 @@ module.exports = {
   ovGroups,
   ovBoxCost,
   ovMixedBoxCost,
+  ovShortBoxCost,
   sheetForDate,
   readCostLedger,
   kstDateStr,
