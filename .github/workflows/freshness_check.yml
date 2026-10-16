@@ -27,10 +27,10 @@ jobs:
           BQ_LOCATION: asia-northeast3
           # Mac mini 07:00 orchestrator가 호출한 수동 실행만 Slack 전송.
           # 10:00 schedule은 GitHub 상태·이메일만 남겨 같은 incident 중복 게시를 막는다.
-          SLACK_WEBHOOK_URL: ${{ github.event_name == 'workflow_dispatch' && secrets.SLACK_WEBHOOK_URL || '' }}
+          # 261017 부문대표 「데이터 검증 내역은 pmkt bot 채널에 올리지 말고 DM으로만」:
+          #   웹훅(채널 고정)은 쓰지 않고 봇 토큰으로 부문대표 DM(사용자 ID → 봇 앱 DM)에만 보낸다. DM이라 멘션 없음.
           SLACK_BOT_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.SLACK_BOT_TOKEN || '' }}
-          SLACK_CHANNEL_ID: C0BF7RA2F8W
-          SLACK_MENTION_ID: U03TZ6G38N6
+          SLACK_CHANNEL_ID: U03TZ6G38N6
         run: python monitoring/freshness_check.py
       - if: always()
         run: rm -f sa_key.json
