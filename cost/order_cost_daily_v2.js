@@ -23,8 +23,8 @@ const SOURCE = "cafe24.rf_cafe24_order_items_current";
 const TARGET = "mart.dtc_order_cost_daily_v2";
 const ORDER_TARGET = "mart.dtc_order_cost_daily_v3";
 const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 3);
-const ENGINE_VERSION = "order-cost-v2.3.0";
-const ORDER_ENGINE_VERSION = "order-cost-v3.2.0";
+const ENGINE_VERSION = "order-cost-v2.4.0";
+const ORDER_ENGINE_VERSION = "order-cost-v3.3.0";
 const COST_MIN_COVERAGE = Number(process.env.COST_MIN_COVERAGE || 0.95);
 const SHIP_MIN_COVERAGE = Number(process.env.SHIP_MIN_COVERAGE || 0.95);
 
