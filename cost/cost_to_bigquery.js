@@ -112,7 +112,18 @@ function ovCleanFl(p) { let f = String(p).replace(/\([^)]*\)/g, " ").replace(/[\
 function ovIpName(pn) { const m = String(pn).match(/(\d+)\s*개입/); return m ? +m[1] : null; }
 function ovGrpOf(pn) { const pns = String(pn).replace(/\s/g, ""); return OV_GROUPS.find(g => pns.includes(g)) || null; }
 function ovGroups(cost) { OV_GROUPS = [...new Set(cost.map(c => c.grp))].filter(Boolean).sort((a, b) => b.length - a.length); return OV_GROUPS; }
+// 261021 단계형 옵션(슈퍼포커스 굿즈 세트 「① 세트 선택=음료 + 굿즈 3종 세트, ② 음료 수량 선택=24개입 (1박스),
+//   ③ 맛 선택=오리지널 12개입 + 울트라바이올렛 12개입」): 숫자를 전부 더하면 24+12+12(+굿즈 「3종」)로 병수가 2배가 된다.
+//   10-20 해당 141건 4,824병이 10,126병으로 잡혀 물류비 +159만·원가 약 +175만 과다. 병수는 「수량 선택=N개입」 하나만 믿는다.
+//   맛 구성이 합계 N과 맞으면 맛별 단가를 쓰고, 없거나 안 맞으면 [](그룹 평균 × 첫 「N개입」 = 수량 선택)으로 보낸다.
+//   세트 선택(굿즈)은 원가표에 없어 병수·원가에 넣지 않는다.
 function ovPieces(pn, on) {
+  const qm = String(on).match(/수량\s*선택\s*[=:：]\s*(\d+)\s*개입/);
+  if (qm) {
+    const total = +qm[1], fm = String(on).match(/맛\s*선택\s*[=:：]\s*(.*)$/);
+    const fp = fm ? ovPieces(pn, fm[1]) : [];
+    return fp.length && fp.reduce((a, p) => a + (p.cnt || 0), 0) === total ? fp : [];
+  }
   on = ovPre(on); const parts = on.split(/[\/+]/).map(x => x.trim()).filter(Boolean), res = [];
   parts.forEach(p => { const cm = p.match(/\((\d+)\s*개입\)/) || p.match(/(\d+)\s*개입/) || p.match(/(\d+)\s*$/) || p.match(/\((\d+)\)/) || p.match(/(\d+)/); let cnt = cm ? +cm[1] : null; const fl = ovCleanFl(p); if (!fl) return; res.push({ fl, cnt }); });
   if (!res.length) return [];

@@ -92,3 +92,15 @@ assert.deepEqual(ovShortBoxCost(YP, "유주얌 전용 특가=[혼합/24개입] �
 assert.equal(ovShortBoxCost(YP, "유주얌 전용 특가=[48개입] 사과24 + 바나나24", yjm), null);   // 모르는 맛 하나라도 있으면 미매칭
 assert.equal(ovShortBoxCost("애사비소다 사과 500ml", "사과12", yjm), null);                     // 상품명에 그룹이 있으면 기존 경로
 console.log("order_cost_daily_v2 short-flavor tests OK");
+// 261021: 슈퍼포커스 굿즈 세트 단계형 옵션 — 병수는 「수량 선택=N개입」만. 맛 숫자·굿즈 「3종」을 더하지 않는다.
+const spf = parseCost([[0, 0, 0, "[상온]클룹_스프린트,슈퍼포커스 오리지널,355ml*1입", 0, 0, 330], [0, 0, 0, "[상온]클룹_스프린트,슈퍼포커스 울트라바이올렛,355ml*1입", 0, 0, 340]]);
+ovGroups(spf);
+const SPN = "스프린트 슈퍼포커스 에너지 355mL 3종 | 사이버펑크";
+const sf1 = ovBoxCost(SPN, "① 세트 선택=음료 + 장패드 세트, ② 음료 수량 선택=24개입 (1박스), ③ 맛 선택=[베스트] 오리지널 12개입 + 울트라바이올렛 12개입", spf, false);
+assert.deepEqual(sf1, { boxCost: 330 * 12 + 340 * 12, cans: 24, pieces: 2 });
+const sf2 = ovBoxCost(SPN, "① 세트 선택=[한정판매] 음료 + 굿즈 3종 세트 (아크릴스탠드 + 장패드 + 메탈키링 1종), ② 음료 수량 선택=72개입", spf, false);
+assert.equal(sf2.cans, 72);
+const sf3 = ovBoxCost(SPN, "① 세트 선택=[베스트] 음료 단독 세트, ② 음료 수량 선택=48개입 (2박스), ③ 맛 선택=오리지널 12개입", spf, false);
+assert.equal(sf3.cans, 48);   // 맛 합계가 수량과 안 맞으면 수량을 믿는다
+assert.equal(ovBoxCost(SPN, "개입 수=24개입_1", spf, false).cans, 24);   // 기존 형식 그대로
+console.log("order_cost_daily_v2 set-option tests OK");
