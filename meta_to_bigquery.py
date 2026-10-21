@@ -30,6 +30,7 @@ KST = ZoneInfo("Asia/Seoul")  # 데이터 기준 시간대(한국)
 import requests
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
+from meta_daily_quality import before_load, after_load
 
 # ──────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -345,7 +346,8 @@ def ensure_table(client):
 # ──────────────────────────────────────────────────────────────────────────
 # 4) 멱등 적재: 날짜 파티션 단위 덮어쓰기 (로드 잡, 결제 불필요)
 # ──────────────────────────────────────────────────────────────────────────
-def load_by_partition(client, table_id, rows):
+def load_by_partition(client, table_id, rows, since=None, until=None):
+    proof = _quality_before(client, rows, since, until)
     if not rows:
         log.info("적재할 행 없음")
         return
@@ -367,11 +369,14 @@ def load_by_partition(client, table_id, rows):
         job = client.load_table_from_json(drows, dest, job_config=job_config)
         job.result()
         log.info("적재(덮어쓰기) %s: %d행", d, len(drows))
+    after_load(client, table_id, proof)
+    log.info("품질 검증 통과: %d개 기준·적재 후 합계 일치", proof["checks"])
 
 
-def load_replace_table(client, table_id, rows):
+def load_replace_table(client, table_id, rows, since=None, until=None):
     """테이블 전체를 당일 데이터로 교체(WRITE_TRUNCATE). d0 처럼 '당일만 유지'할 때 사용.
     파티션/클러스터 설정은 테이블 속성이라 그대로 유지된다."""
+    proof = _quality_before(client, rows, since, until)
     if not rows:
         log.info("적재할 행 없음 → 기존 테이블 유지(전체 교체 생략)")
         return
@@ -382,7 +387,16 @@ def load_replace_table(client, table_id, rows):
     )
     job = client.load_table_from_json(rows, table_id, job_config=job_config)
     job.result()
+    after_load(client, table_id, proof)
     log.info("전체 교체 완료: %d행 (당일만 유지)", len(rows))
+
+
+def _quality_before(client, rows, since, until):
+    days = [r["report_date"] for r in rows]
+    today = datetime.now(KST).date().isoformat()
+    return before_load(client, BQ_PROJECT, BQ_DATASET, rows, AD_ACCOUNT_IDS,
+                       since or min(days, default=today), until or max(days, default=today),
+                       float(os.environ.get("META_MIN_DAILY_REFERENCE_RATIO", "0.5")))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -405,9 +419,9 @@ def run_daily(client, table_id):
     since = until - timedelta(days=LOOKBACK_DAYS - 1)
     rows = _collect_rows(since.isoformat(), until.isoformat())
     if REPLACE_TABLE:
-        load_replace_table(client, table_id, rows)   # d0: 당일만 유지 (전체 교체)
+        load_replace_table(client, table_id, rows, since.isoformat(), until.isoformat())   # d0: 당일만 유지 (전체 교체)
     else:
-        load_by_partition(client, table_id, rows)     # 확정: 날짜 파티션 누적
+        load_by_partition(client, table_id, rows, since.isoformat(), until.isoformat())     # 확정: 날짜 파티션 누적
     log.info("일상 적재 완료: 총 %d행 (%s ~ %s)", len(rows), since, until)
 
 
@@ -437,7 +451,7 @@ def _run_backfill_range(client, table_id, since, until):
     grand = 0
     for ws, we in _month_windows(since, until):
         rows = _collect_rows(ws.isoformat(), we.isoformat())
-        load_by_partition(client, table_id, rows)
+        load_by_partition(client, table_id, rows, ws.isoformat(), we.isoformat())
         grand += len(rows)
         log.info(">> 구간 %s~%s 적재: %d행 (누적 %d)", ws, we, len(rows), grand)
         time.sleep(SLEEP_BETWEEN)   # 요청 한도 회피
