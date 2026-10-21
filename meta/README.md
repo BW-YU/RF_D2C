@@ -22,3 +22,16 @@
 - **어트리뷰션 윈도우**: 파이프라인이 `action_attribution_windows`(1d_click/7d_click/1d_view/1d_ev)를 함께 수집. actions/action_values 각 항목에 윈도우별 값이 담기고, 최상위 `value`(계정 기본=클릭7일+조회1일)는 그대로라 `web_purchase_*`·마트 수치는 불변. 구매 3기준 컬럼(위)이 이걸 이용. (과거 구간은 윈도우 포함 재백필 후 채워짐)
 - **전환 우선순위**: 각 전환은 픽셀 이벤트 우선(`offsite_conversion.fb_pixel_*`) → 표준 이벤트 → omni 순으로 값을 하나 선택(`meta_ads.action_val`/`action_obj` 함수). 파이프라인의 `web_purchase_*` 컬럼과 동일한 규칙이라 구매 수치가 일치한다.
 - **몰 구분**: 계정ID 기준(cloop = 1462607070849777·793134085895227·3589083851393515, sprint = 3342733785912061). 통합마트 규칙과 동일.
+
+
+## 2026-10-21 일별 파티션 품질 게이트
+
+`meta_to_bigquery.py`는 일별과 d0 교체 모두에서 쓰기 **전** 계정×날짜의
+spend/impressions를 기존 일별 및 `rf_meta_ads_hourly`와 대조한다.
+어느 양수 기준보다 50% 미만이거나 활동 계정/날짜 누락, 중복 광고 키,
+비정상 숫자, 구매 actions 전부 소실이 발견되면 예외로 종료해 기존 데이터를 보존한다.
+`META_MIN_DAILY_REFERENCE_RATIO` 기본값 `0.5`는 운영 차단선이며 조정 가능하다.
+시간별 자료는 광고주 시간대 기준 전달량 대조용이며 구매 전환 대체값이 아니다.
+과거 hourly 보유 기간 밖은 기존 daily를 대조 기준으로 사용한다.
+적재 후에는 행 수·지출·노출·actions 보유 행 수를 다시 읽어 입력 합계와 대사한다.
+실행: `python -m unittest discover -s meta -p test_daily_quality.py -v`.
