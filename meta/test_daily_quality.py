@@ -23,6 +23,11 @@ class QualityTests(unittest.TestCase):
     def test_impressions_independently_rejected(self):
         with self.assertRaisesRegex(RuntimeError,'impressions=97'): self.check([row(impressions=97)])
     def test_normal_delivery_accepted(self): self.assertEqual(self.check([row()]),2)
+    def test_missing_metric_counts_as_zero(self):
+        # 261110 장애: 오늘 지출 0원·전날 노출 전환만 붙은 광고 행은 메타가 impressions를 빼고 보낸다(None).
+        # 이 한 행에 01시부터 d0 적재가 전부 멈췄다 — 없는 값은 0이다.
+        r2=row(0,None);r2['ad_id']='ad-2'
+        self.assertEqual(self.check([row(),r2]),2)
     def test_exact_fifty_percent_allowed(self): self.check([row(100,100)],[ref(spend=200,impressions=200)])
     def test_below_fifty_percent_rejected(self):
         with self.assertRaises(RuntimeError): self.check([row(99.99,100)],[ref(spend=200,impressions=200)])
@@ -40,7 +45,7 @@ class QualityTests(unittest.TestCase):
     def test_ad_duplicates_block_candidate(self):
         with self.assertRaisesRegex(RuntimeError,'duplicate ad'): aggregate([row(),row()])
     def test_nonfinite_negative_null_rejected(self):
-        for v in [float('nan'),float('inf'),-1,None]:
+        for v in [float('nan'),float('inf'),-1]:
             with self.subTest(v=v), self.assertRaises((RuntimeError,TypeError)): aggregate([row(v)])
     def test_bad_floor_rejected(self):
         for v in [0,-1,1.01,float('nan')]:

@@ -16,7 +16,8 @@ def aggregate(rows):
         t = totals.setdefault((day, acct), dict(n_rows=0, spend=0., impressions=0., action_rows=0))
         t['n_rows'] += 1
         for metric in ('spend', 'impressions'):
-            value = float(r[metric])
+            # 메타가 노출·지출이 없는 광고 행에서 필드를 빼고 보낸다(transform이 None으로 둔다) — 0으로 센다.
+            value = float(r[metric] if r[metric] is not None else 0)
             if not math.isfinite(value) or value < 0:
                 raise RuntimeError(f'Meta quality: invalid {metric} for {key}')
             t[metric] += value
