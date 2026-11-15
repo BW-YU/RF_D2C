@@ -3,6 +3,8 @@ const assert = require("assert");
 const { loadRatecard, dateValue, dealFor, productType, rateAsOf, computeDaily } = require("./order_cost_daily_v2");
 
 const card = loadRatecard();
+// 261115 파서는 조각 구성(comp)도 돌려준다 — 기존 계약(원가·캔·조각 수)만 비교할 때 쓴다.
+const core = x => x && ({ boxCost: x.boxCost, cans: x.cans, pieces: x.pieces });
 assert.equal(productType("클룹 애사비즈 30개입"), "파우치");
 assert.equal(productType("스프린트 에너지 24개입"), "캔");
 assert.deepEqual(rateAsOf(card, "2026-09-14", "캔", 24, false), { cost: 4954, exact: true });
@@ -27,7 +29,7 @@ const { parseCost, ovGroups, ovBoxCost } = require("./cost_to_bigquery");
 const sp = parseCost([[0, 0, 0, "[상온]클룹_스프린트,진격거,500ml*1입", 0, 0, 400],
   [0, 0, 0, "[상온]클룹_스프린트,에반게리온,보틀", 0, 0, 12580]]);
 ovGroups(sp);
-assert.deepEqual(ovBoxCost("스프린트 신상 에너지 355mL", "개입 수=24개입_1", sp, false), { boxCost: 9600, cans: 24, pieces: 1 });
+assert.deepEqual(core(ovBoxCost("스프린트 신상 에너지 355mL", "개입 수=24개입_1", sp, false)), { boxCost: 9600, cans: 24, pieces: 1 });
 // 261002: 상품명에 용량이 없으면 그룹 주력 규격(여기선 500mL) 단가를 쓴다(맛 일치 첫 품목 250mL로 새지 않게).
 const as = parseCost([[0, 0, 0, "클룹_애사비소다,오리지널,250ml", 0, 0, 237],
   [0, 0, 0, "클룹_애사비소다,오리지널,500ml", 0, 0, 292],
@@ -68,7 +70,7 @@ const mix = parseCost([[0, 0, 0, "[상온]클룹_애사비소다,사이다,250ml
   [0, 0, 0, "[상온]클룹_애사비소다,콜라,250ml*1입", 0, 0, 295],
   [0, 0, 0, "[상온]클룹_오프아워,자몽피즈,355ml*1입", 0, 0, 360]]);
 ovGroups(mix);
-assert.deepEqual(ovMixedBoxCost("맛 선택=애사비소다 사이다*12 / 오프아워 자몽피즈*36", mix), { boxCost: 290 * 12 + 360 * 36, cans: 48, pieces: 2 });
+assert.deepEqual(core(ovMixedBoxCost("맛 선택=애사비소다 사이다*12 / 오프아워 자몽피즈*36", mix)), { boxCost: 290 * 12 + 360 * 36, cans: 48, pieces: 2 });
 assert.equal(ovMixedBoxCost("맛 선택=애사비소다 사이다*12 / 알수없는음료*12", mix), null);   // 한 조각이라도 못 읽으면 미매칭으로 남긴다
 assert.equal(ovMixedBoxCost("맛 선택=애사비소다 사이다", mix), null);                           // 수량 없는 조각
 assert.equal(ovBoxCost("[한정판매] 베스트 제품 내맘대로 골라담기", "구성=48개입#1", mix, false), null);
@@ -87,8 +89,8 @@ const yjm = parseCost([[0, 0, 0, "[상온]클룹_애사비소다,오리지널,50
   [0, 0, 0, "[상온]클룹_제로소다,레몬,250ml*1입", 0, 0, 227]]);
 ovGroups(yjm);
 const YP = "[유주얌 6차 마켓] 클룹 베스트셀러 특가";
-assert.deepEqual(ovShortBoxCost(YP, "유주얌 전용 특가=[BEST/48개입] 사과24 + 콜라24", yjm), { boxCost: 290 * 24 + 296 * 24, cans: 48, pieces: 2 });  // 캔 단가(페트 제외)
-assert.deepEqual(ovShortBoxCost(YP, "유주얌 전용 특가=[혼합/24개입] 피치릴렉서24", yjm), { boxCost: 340 * 24, cans: 24, pieces: 1 });
+assert.deepEqual(core(ovShortBoxCost(YP, "유주얌 전용 특가=[BEST/48개입] 사과24 + 콜라24", yjm)), { boxCost: 290 * 24 + 296 * 24, cans: 48, pieces: 2 });  // 캔 단가(페트 제외)
+assert.deepEqual(core(ovShortBoxCost(YP, "유주얌 전용 특가=[혼합/24개입] 피치릴렉서24", yjm)), { boxCost: 340 * 24, cans: 24, pieces: 1 });
 assert.equal(ovShortBoxCost(YP, "유주얌 전용 특가=[48개입] 사과24 + 바나나24", yjm), null);   // 모르는 맛 하나라도 있으면 미매칭
 assert.equal(ovShortBoxCost("애사비소다 사과 500ml", "사과12", yjm), null);                     // 상품명에 그룹이 있으면 기존 경로
 console.log("order_cost_daily_v2 short-flavor tests OK");
@@ -97,10 +99,34 @@ const spf = parseCost([[0, 0, 0, "[상온]클룹_스프린트,슈퍼포커스 �
 ovGroups(spf);
 const SPN = "스프린트 슈퍼포커스 에너지 355mL 3종 | 사이버펑크";
 const sf1 = ovBoxCost(SPN, "① 세트 선택=음료 + 장패드 세트, ② 음료 수량 선택=24개입 (1박스), ③ 맛 선택=[베스트] 오리지널 12개입 + 울트라바이올렛 12개입", spf, false);
-assert.deepEqual(sf1, { boxCost: 330 * 12 + 340 * 12, cans: 24, pieces: 2 });
+assert.deepEqual(core(sf1), { boxCost: 330 * 12 + 340 * 12, cans: 24, pieces: 2 });
 const sf2 = ovBoxCost(SPN, "① 세트 선택=[한정판매] 음료 + 굿즈 3종 세트 (아크릴스탠드 + 장패드 + 메탈키링 1종), ② 음료 수량 선택=72개입", spf, false);
 assert.equal(sf2.cans, 72);
 const sf3 = ovBoxCost(SPN, "① 세트 선택=[베스트] 음료 단독 세트, ② 음료 수량 선택=48개입 (2박스), ③ 맛 선택=오리지널 12개입", spf, false);
 assert.equal(sf3.cans, 48);   // 맛 합계가 수량과 안 맞으면 수량을 믿는다
 assert.equal(ovBoxCost(SPN, "개입 수=24개입_1", spf, false).cans, 24);   // 기존 형식 그대로
 console.log("order_cost_daily_v2 set-option tests OK");
+// 261115: 줄 브랜드 분할 — 혼합 상자는 조각 브랜드로 원가·캔·순매출을 나누고, 합계 원가는 그대로다. 딜 축에 순매출(net)을 싣는다.
+const { lineBrandSplit } = require("./order_cost_daily_v2");
+ovGroups(mix);
+const dm2 = computeDaily([{ date: "2026-11-02", orderDate: "2026-11-02", mallId: "cloop", orderId: "m1",
+  productName: "[한정판매] 베스트 제품 내맘대로 골라담기", optionName: "구성=48개입#1",
+  addOption: "맛 선택=애사비소다 콜라*24 / 오프아워 자몽피즈*24", quantity: 1, allocatedNet: 30000 },
+  { date: "2026-11-02", orderDate: "2026-11-02", mallId: "cloop", orderId: "m2",
+  productName: "클룹 애사비소다 250mL", optionName: "맛 선택=사이다*24", quantity: 1, allocatedNet: 12000 }],
+  new Map([["[상온]클룹_애사비소다,콜라,250ml*1입", [{ ef: "2026-01-01", cost: 295 }]],
+           ["[상온]클룹_애사비소다,사이다,250ml*1입", [{ ef: "2026-01-01", cost: 290 }]],
+           ["[상온]클룹_오프아워,자몽피즈,355ml*1입", [{ ef: "2026-01-01", cost: 360 }]]]), card, []);
+const deals2 = JSON.parse(dm2[0].deal_breakdown_json), by2 = b => deals2.filter(x => x.brand === b);
+assert.equal(dm2[0].cogs, 295 * 24 + 360 * 24 + 290 * 24);                                   // 합계 불변
+assert.equal(deals2.reduce((s, x) => s + x.cogs, 0), dm2[0].cogs);
+assert.equal(deals2.reduce((s, x) => s + x.net, 0), 42000);                                   // 순매출 = 줄 배분액 합
+assert.equal(by2("오프아워")[0].cogs, 360 * 24);                                                // 예전엔 콜라 몫까지 오프아워
+assert.equal(by2("오프아워")[0].net, 15000);                                                    // 캔 수 비율
+assert.equal(by2("콜사비")[0].cogs, 295 * 24);
+assert.equal(by2("애사비즈")[0].net, 12000);                                                    // 맛 글자에 브랜드가 없으면 상품명 브랜드(기존과 같음)
+assert.equal(deals2.reduce((s, x) => s + x.item_lines, 0), dm2[0].item_line_count);           // 줄 수는 한 번만
+assert.deepEqual(lineBrandSplit(null, "아무거나", "기타"), [{ brand: "기타", cogsShare: 1, unitShare: 1 }]);
+assert.deepEqual(lineBrandSplit({ comp: [{ text: "오리지널", cogs: 100, cans: 2 }] }, "클룹 애사비소다", "콜사비"),
+  [{ brand: "애사비즈", cogsShare: 1, unitShare: 1 }]);
+console.log("order_cost_daily_v2 brand-split tests OK");

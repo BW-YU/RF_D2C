@@ -173,8 +173,9 @@ function ovBoxCost(pn, on, cost, sp) {
     const per = Math.round(cand.reduce((a, b) => a + b.price, 0) / cand.length);
     return { boxCost: per * ip, cans: ip, pieces: 1 };
   }
-  let boxCost = 0, cans = 0; ps.forEach(p => { boxCost += (p.cnt || 0) * (ovFlavorCost(pn, p.fl, cost, sp) || 0); cans += (p.cnt || 0); });
-  return { boxCost, cans, pieces: ps.length };
+  let boxCost = 0, cans = 0; const comp = [];
+  ps.forEach(p => { const c = (p.cnt || 0) * (ovFlavorCost(pn, p.fl, cost, sp) || 0); boxCost += c; cans += (p.cnt || 0); comp.push({ text: p.fl, cogs: c, cans: p.cnt || 0 }); });
+  return { boxCost, cans, pieces: ps.length, comp };
 }
 
 // 261016 다브랜드 골라담기(클룹 593 「[한정판매] 베스트 제품 내맘대로 골라담기」): 상품명에 브랜드 그룹이 없고
@@ -185,7 +186,7 @@ function ovMixedBoxCost(addOption, cost) {
   const body = String(addOption || "").replace(/^[^=]*=/, "");
   const parts = body.split(/\s*\/\s*/).map(x => x.trim()).filter(Boolean);
   if (!parts.length) return null;
-  let boxCost = 0, cans = 0;
+  let boxCost = 0, cans = 0; const comp = [];   // 261115 comp = 조각별 원가·캔(브랜드 분할용, 합계 계산에는 안 쓴다)
   for (const part of parts) {
     const m = part.match(/^(.*?)\s*[*xX×]\s*(\d+)\s*$/);
     if (!m) return null;
@@ -193,9 +194,9 @@ function ovMixedBoxCost(addOption, cost) {
     if (!ovGrpOf(text) || !(cnt > 0)) return null;
     const unit = ovFlavorCost(text, ovCleanFl(text), cost, false);
     if (!(unit > 0)) return null;
-    boxCost += unit * cnt; cans += cnt;
+    boxCost += unit * cnt; cans += cnt; comp.push({ text, cogs: unit * cnt, cans: cnt });
   }
-  return { boxCost, cans, pieces: parts.length };
+  return { boxCost, cans, pieces: parts.length, comp };
 }
 
 // 261017 공구 짧은 맛 이름(유주얌 6차 「[유주얌 6차 마켓] 클룹 베스트셀러 특가」 옵션 「[BEST/48개입] 사과12 + 감귤12 + 콜라12 + 자두12」):
@@ -211,14 +212,14 @@ const OV_SHORT = {
 function ovShortBoxCost(pn, on, cost) {
   if (ovGrpOf(pn)) return null;
   const ps = ovPieces(pn, String(on || "").replace(/^[^=]*=/, "")); if (!ps.length) return null;   // 「유주얌 전용 특가=」 키 제거
-  let boxCost = 0, cans = 0;
+  let boxCost = 0, cans = 0; const comp = [];
   for (const p of ps) {
     const text = OV_SHORT[p.fl]; if (!text || !(p.cnt > 0)) return null;
     const unit = ovFlavorCost(text, ovCleanFl(text), cost, false);
     if (!(unit > 0)) return null;
-    boxCost += unit * p.cnt; cans += p.cnt;
+    boxCost += unit * p.cnt; cans += p.cnt; comp.push({ text, cogs: unit * p.cnt, cans: p.cnt });
   }
-  return { boxCost, cans, pieces: ps.length };
+  return { boxCost, cans, pieces: ps.length, comp };
 }
 
 // ===== 날짜 (KST) =====

@@ -23,8 +23,8 @@ const SOURCE = "cafe24.rf_cafe24_order_items_current";
 const TARGET = "mart.dtc_order_cost_daily_v2";
 const ORDER_TARGET = "mart.dtc_order_cost_daily_v3";
 const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 3);
-const ENGINE_VERSION = "order-cost-v2.4.0";
-const ORDER_ENGINE_VERSION = "order-cost-v3.3.0";
+const ENGINE_VERSION = "order-cost-v2.5.0";
+const ORDER_ENGINE_VERSION = "order-cost-v3.4.0";
 const COST_MIN_COVERAGE = Number(process.env.COST_MIN_COVERAGE || 0.95);
 const SHIP_MIN_COVERAGE = Number(process.env.SHIP_MIN_COVERAGE || 0.95);
 
@@ -67,6 +67,25 @@ function brandOf(name, option) {
   if (/스프린트|에너지/.test(s)) return "스프린트";
   if (/애사비/.test(s)) return "애사비즈";
   return "기타";
+}
+
+// 261115 줄 브랜드 분할: brandOf(상품명+옵션)는 첫 정규식 일치 하나로 줄 전체를 붙여, 조합팩·혼합 상자(593 골라담기
+//   「애사비소다 콜라*24 / 오프아워 자몽피즈*24」)가 통째로 오프아워로 갔다 — 브랜드별 원가율이 7월 오프아워 44%·스프린트 12%처럼
+//   튀어 대시보드가 브랜드 손익에 쓰지 못했다. 파서가 조각(comp)을 주면 조각마다 브랜드를 정하고 원가는 조각 원가, 캔·순매출은
+//   캔 수 비율로 나눈다. 조각 글자에 브랜드가 없으면(맛 이름만: 「오리지널」) 상품명만으로 본 브랜드, 그것도 기타면 기존 브랜드.
+//   딜 판정(dealFor)은 기존 brandOf 그대로 — 딜 축은 바꾸지 않는다. 합계 원가·물류는 변하지 않는다.
+function lineBrandSplit(parsed, productName, fallback) {
+  const comp = parsed && Array.isArray(parsed.comp) ? parsed.comp.filter(c => c.cans > 0) : [];
+  if (!comp.length) return [{ brand: fallback, cogsShare: 1, unitShare: 1 }];
+  const nameBrand = brandOf(productName, "");
+  const by = new Map();
+  for (const c of comp) {
+    const own = brandOf(c.text, "");
+    const b = own !== "기타" ? own : (nameBrand !== "기타" ? nameBrand : fallback);
+    const z = by.get(b) || { cogs: 0, cans: 0 }; z.cogs += c.cogs || 0; z.cans += c.cans; by.set(b, z);
+  }
+  const tc = [...by.values()].reduce((a, z) => a + z.cogs, 0), tu = [...by.values()].reduce((a, z) => a + z.cans, 0);
+  return [...by.entries()].map(([brand, z]) => ({ brand, cogsShare: tc > 0 ? z.cogs / tc : z.cans / tu, unitShare: z.cans / tu }));
 }
 
 function priceBrand(brand) {
@@ -166,12 +185,15 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
           Number(r.allocatedNet || 0) * 1.1 / Math.max(qty, 1), priceLog)
           : { deal: "오가닉", brand: brandOf(pn, on), exact: false };
         if (dm.exact) a.deal_mapped_lines++;
+        const lineNet = Number(r.allocatedNet || 0);
         if (!parsed || !(parsed.boxCost > 0) || !(parsed.cans > 0) || !(qty > 0)) {
           a.unmatched_cogs_lines++; orderCostOk = false;
-          parsedLines.push({ ...dm, cogs: 0, units: 0 }); continue;
+          parsedLines.push({ ...dm, cogs: 0, units: 0, net: lineNet, line: 1 }); continue;
         }
         a.cogs_matched_lines++; orderCogs += qty * parsed.boxCost; units += qty * parsed.cans;
-        parsedLines.push({ ...dm, cogs: qty * parsed.boxCost, units: qty * parsed.cans });
+        const split = lineBrandSplit(parsed, pn, dm.brand);
+        split.forEach((x, i) => parsedLines.push({ ...dm, brand: x.brand, cogs: qty * parsed.boxCost * x.cogsShare,
+          units: qty * parsed.cans * x.unitShare, net: lineNet * x.unitShare, line: i === 0 ? 1 : 0 }));
         types.add(productType(pn)); components.add(`${pn}|${on}`);
       }
       a.cogs += orderCogs;
@@ -182,9 +204,9 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
       else a.unmatched_logistics_orders++;
       for (const line of parsedLines) {
         const key = `${line.brand}|${line.deal}`;
-        const d = a.deals.get(key) || { brand: line.brand, deal: line.deal, cogs: 0, logistics: 0, item_lines: 0, order_ids: new Set() };
-        d.cogs += line.cogs; d.logistics += ship && units ? ship.cost * line.units / units : 0;
-        d.item_lines++; d.order_ids.add(order.id); a.deals.set(key, d);
+        const d = a.deals.get(key) || { brand: line.brand, deal: line.deal, cogs: 0, logistics: 0, net: 0, item_lines: 0, order_ids: new Set() };
+        d.cogs += line.cogs; d.logistics += ship && units ? ship.cost * line.units / units : 0; d.net += line.net;
+        d.item_lines += line.line; d.order_ids.add(order.id); a.deals.set(key, d);
       }
       if (!orderCostOk) { /* 품질 컬럼이 이 주문의 부분 원가를 명시적으로 드러낸다. */ }
       acc.set(order.mall, a);
@@ -197,7 +219,7 @@ function computeDaily(rawRows, ledger, ratecard, priceLog = []) {
       a.avg_order_to_ship_days = a.order_to_ship_lag_orders ? a.order_to_ship_lag_days_sum / a.order_to_ship_lag_orders : null;
       a.is_trusted = a.cost_coverage >= COST_MIN_COVERAGE && a.shipping_coverage >= SHIP_MIN_COVERAGE;
       a.deal_breakdown_json = JSON.stringify([...a.deals.values()].map(d => ({ brand: d.brand, deal: d.deal,
-        cogs: Math.round(d.cogs), logistics: Math.round(d.logistics), item_lines: d.item_lines,
+        cogs: Math.round(d.cogs), logistics: Math.round(d.logistics), net: Math.round(d.net), item_lines: d.item_lines,
         orders: d.order_ids.size })).sort((x, y) => y.cogs + y.logistics - x.cogs - x.logistics));
       delete a.deals;
       output.push(a);
@@ -315,4 +337,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(e => { console.error("[cost-v2] 실패:", e && e.stack || e); process.exit(1); });
-module.exports = { sizedName, csvCells, dateValue, loadRatecard, brandOf, priceBrand, dealFor, productType, rateAsOf, computeDaily };
+module.exports = { sizedName, csvCells, dateValue, loadRatecard, brandOf, lineBrandSplit, priceBrand, dealFor, productType, rateAsOf, computeDaily, sourceRows, readPriceLog };
