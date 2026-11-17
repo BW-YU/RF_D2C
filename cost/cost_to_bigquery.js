@@ -124,6 +124,18 @@ function ovPieces(pn, on) {
     const fp = fm ? ovPieces(pn, fm[1]) : [];
     return fp.length && fp.reduce((a, p) => a + (p.cnt || 0), 0) === total ? fp : [];
   }
+  // 261118 「개입 수=[체험팩] 24개입, 맛 구성=스윗피치 6 + 라임 6 + 자몽 6 + 피치릴렉서 6」·1+1 「개입 수=[베스트] 30개입 (24+6),
+  //   본품 구성 *6개입 별도 선택=스윗피치 12 + 라임 12」: 반각 「+」로 쪼개면 총 개입 수와 맛별 수량이 더해져 병수가 24→42로
+  //   부풀었다(11-17 오프아워 「300만 캔」 페이지 개명 — 전각 「＋」가 반각으로 바뀜, 원가율 31%→34%·물류 21%→24%).
+  //   마지막 「=」 뒤 구성 합계가 총 개입 수 또는 「(본품+증정)」의 본품과 맞으면 구성만 믿는다. 1+1 증정 6입은 같은 주문의
+  //   100원 상품 줄로 따로 들어온다(11-17 오프아워 100원 줄 193건 전부 1+1 주문 안) — 여기서 더하면 이중 집계다.
+  const tm = String(on).match(/개입\s*수\s*[=:：]\s*(?:\[[^\]]*\]\s*)?(\d+)\s*개입(?:\s*\(\s*(\d+)\s*\+\s*\d+\s*\))?/);
+  const eq = String(on).lastIndexOf("=");
+  if (tm && eq > tm.index + tm[0].search(/[=:：]/)) {
+    const fp = ovPieces(pn, String(on).slice(eq + 1).replace(/＋/g, "+"));
+    const sum = fp.reduce((a, p) => a + (p.cnt || 0), 0);
+    if (fp.length && (sum === +tm[1] || (tm[2] && sum === +tm[2]))) return fp;
+  }
   on = ovPre(on); const parts = on.split(/[\/+]/).map(x => x.trim()).filter(Boolean), res = [];
   parts.forEach(p => { const cm = p.match(/\((\d+)\s*개입\)/) || p.match(/(\d+)\s*개입/) || p.match(/(\d+)\s*$/) || p.match(/\((\d+)\)/) || p.match(/(\d+)/); let cnt = cm ? +cm[1] : null; const fl = ovCleanFl(p); if (!fl) return; res.push({ fl, cnt }); });
   if (!res.length) return [];

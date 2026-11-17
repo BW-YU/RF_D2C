@@ -130,3 +130,18 @@ assert.deepEqual(lineBrandSplit(null, "아무거나", "기타"), [{ brand: "기�
 assert.deepEqual(lineBrandSplit({ comp: [{ text: "오리지널", cogs: 100, cans: 2 }] }, "클룹 애사비소다", "콜사비"),
   [{ brand: "애사비즈", cogsShare: 1, unitShare: 1 }]);
 console.log("order_cost_daily_v2 brand-split tests OK");
+
+// 261118 「개입 수=N개입」 + 반각 「+」 맛 구성: 총 개입 수와 맛별 수량을 더하지 않는다(11-17 오프아워 24입이 42캔으로 집계).
+const ohp = parseCost([[0, 0, 0, "[상온]클룹_오프아워,라임브리즈,350ml*1입", 0, 0, 351],
+  [0, 0, 0, "[상온]클룹_오프아워,피치릴렉서,350ml*1입", 0, 0, 352],
+  [0, 0, 0, "[상온]클룹_오프아워,자몽피즈,350ml*1입", 0, 0, 353]]);
+ovGroups(ohp);
+const ohPn = "[시크릿 특가] 300만 캔 돌파 기념! 클룹 오프아워 최저가";
+assert.equal(ovBoxCost(ohPn, "① 개입 수=[체험팩] 24개입, ② 맛 구성=[베스트] 라임 12 + 자몽 6 + 피치릴렉서 6", ohp, false).cans, 24);
+assert.equal(ovBoxCost(ohPn, "① 개입 수=[체험팩] 24개입, ② 맛 구성=[베스트] 라임 12 + 자몽 6 + 피치릴렉서 6", ohp, false).boxCost, 351 * 12 + 353 * 6 + 352 * 6);
+assert.equal(ovBoxCost(ohPn, "① 개입 수=[베스트] 48개입, ② 맛 구성=[베스트] 라임브리즈 24 ＋ 자몽피즈 12 ＋ 피치릴렉서 12", ohp, false).cans, 48);
+// 1+1 「(본품+증정)」: 증정 6입은 같은 주문의 100원 줄로 따로 온다 — 본품 구성만 센다.
+const ohOne = "[출시특가] 오프아워 시크릿 1+1 & 100원 특가!";
+assert.equal(ovBoxCost(ohOne, "개입 수=[베스트] 30개입 (24+6), 본품 구성 *6개입 별도 선택=[NEW] 라임 12 + 자몽 12", ohp, false).cans, 24);
+assert.equal(ovBoxCost(ohOne, "① 총 개입 수=[체험팩] 18개입 (12+6), ② 본품 구성 *6개입 별도 선택=[베스트] 라임브리즈 6 ＋ 피치릴렉서 6", ohp, false).cans, 12);
+console.log("order_cost_daily_v2 pack-total tests OK");
