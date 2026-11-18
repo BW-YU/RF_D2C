@@ -94,6 +94,23 @@ assert.deepEqual(core(ovShortBoxCost(YP, "유주얌 전용 특가=[혼합/24개�
 assert.equal(ovShortBoxCost(YP, "유주얌 전용 특가=[48개입] 사과24 + 바나나24", yjm), null);   // 모르는 맛 하나라도 있으면 미매칭
 assert.equal(ovShortBoxCost("애사비소다 사과 500ml", "사과12", yjm), null);                     // 상품명에 그룹이 있으면 기존 경로
 console.log("order_cost_daily_v2 short-flavor tests OK");
+// 261119: 원가 미매칭 3종 — 593 맛 이름만 조각(딸기*12)·179 바이탈레몬 페트 옵션·럭키박스 라벨형 구성.
+const { ovLabeledBoxCost } = require("./cost_to_bigquery");
+const u19 = parseCost([[0, 0, 0, "[상온]클룹_애사비소다,오리지널,500ml*1입", 0, 0, 290], [0, 0, 0, "[상온]클룹_애사비소다,콜라,500ml*1입", 0, 0, 296],
+  [0, 0, 0, "[상온]클룹_원더팝,레몬트위스트,350ml*1입", 0, 0, 300], [0, 0, 0, "[상온]클룹_오프아워,피치릴렉서,350ml*1입", 0, 0, 340],
+  [0, 0, 0, "[상온]클룹_바이탈레몬스파클링,500ml*1입 페트", 0, 0, 363]]);
+ovGroups(u19);
+assert.deepEqual(core(ovMixedBoxCost("맛 선택=딸기*12 / 애사비소다 콜라*12", u19)), { boxCost: 293 * 12 + 296 * 12, cans: 24, pieces: 2 });  // 딸기 행 없음 → 애사비소다 캔 평균
+const VP = "클룹 바이탈레몬/자몽 스파클링 500mL (페트/캔)";
+assert.deepEqual(core(ovShortBoxCost(VP, "맛 선택=[맛보기팩/24개입] 바이탈레몬(페트) 24", u19)), { boxCost: 363 * 24, cans: 24, pieces: 1 });
+assert.deepEqual(core(ovShortBoxCost(VP, "맛 선택=[최대할인/96개입] 바이탈레몬(페트) 96", u19)), { boxCost: 363 * 96, cans: 96, pieces: 1 });
+assert.equal(ovShortBoxCost(VP, "맛 선택=[24개입] 바이탈레몬(캔) 24", u19), null);   // 캔은 페트 단가로 새지 않게 미매칭 유지
+const LB = "[골라담기] 3종 맛보기 럭키박스";
+assert.deepEqual(core(ovLabeledBoxCost(LB, "애사비소다 ①=콜라 (12개입), 애사비소다 ②=사과 (12개입), 원더팝=레몬트위스트 (12개입), 오프아워=피치릴렉서 (12개입)", u19)),
+  { boxCost: (296 + 290 + 300 + 340) * 12, cans: 48, pieces: 4 });
+assert.equal(ovLabeledBoxCost(LB, "애사비소다 ①=콜라 (12개입), 알수없음=무엇 (12개입)", u19), null);
+assert.equal(ovLabeledBoxCost("클룹 애사비소다 500ml", "애사비소다 ①=콜라 (12개입), 애사비소다 ②=사과 (12개입)", u19), null);   // 상품명에 그룹이 있으면 기존 경로
+console.log("order_cost_daily_v2 unmatched-option tests OK");
 // 261021: 슈퍼포커스 굿즈 세트 단계형 옵션 — 병수는 「수량 선택=N개입」만. 맛 숫자·굿즈 「3종」을 더하지 않는다.
 const spf = parseCost([[0, 0, 0, "[상온]클룹_스프린트,슈퍼포커스 오리지널,355ml*1입", 0, 0, 330], [0, 0, 0, "[상온]클룹_스프린트,슈퍼포커스 울트라바이올렛,355ml*1입", 0, 0, 340]]);
 ovGroups(spf);
