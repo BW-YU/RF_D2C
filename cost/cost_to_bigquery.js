@@ -203,10 +203,12 @@ function ovMixedBoxCost(addOption, cost) {
     const m = part.match(/^(.*?)\s*[*xX×]\s*(\d+)\s*$/);
     if (!m) return null;
     const text = m[1], cnt = +m[2];
-    if (!ovGrpOf(text) || !(cnt > 0)) return null;
-    const unit = ovFlavorCost(text, ovCleanFl(text), cost, false);
+    // 261119 그룹 없는 맛 조각(「딸기*12」 — 애사비소다 딸기 출시 뒤 593 옵션이 맛 이름만 적는다)은 OV_SHORT 정확 일치로 그룹을 붙인다.
+    const named = ovGrpOf(text) ? text : OV_SHORT[ovCleanFl(text)];
+    if (!named || !(cnt > 0)) return null;
+    const unit = ovFlavorCost(named, ovCleanFl(named), cost, false);
     if (!(unit > 0)) return null;
-    boxCost += unit * cnt; cans += cnt; comp.push({ text, cogs: unit * cnt, cans: cnt });
+    boxCost += unit * cnt; cans += cnt; comp.push({ text: named, cogs: unit * cnt, cans: cnt });
   }
   return { boxCost, cans, pieces: parts.length, comp };
 }
@@ -220,10 +222,17 @@ const OV_SHORT = {
   "패션후르츠": "애사비소다 패션후르츠", "콜라": "애사비소다 콜라", "자두": "애사비소다 자두", "레몬": "애사비소다 레몬비니거",
   "복숭아": "애사비소다 신비복숭아", "체리": "애사비소다 타트체리", "리치": "애사비소다 리치", "망고": "애사비소다 망고",
   "피치릴렉서": "오프아워 피치릴렉서", "라임브리즈": "오프아워 라임브리즈",
+  // 261119 원가표에 딸기 행이 아직 없어 애사비소다 500mL 캔 평균 단가로 간다(구매팀 업로드 시 자동 반영).
+  "딸기": "애사비소다 딸기",
+  // 261119 클룹 179 「바이탈레몬/자몽 스파클링 (페트/캔)」 옵션 「[맛보기팩/24개입] 바이탈레몬(페트) 24」 — 상품명이 「바이탈레몬/자몽」이라
+  //   그룹(바이탈레몬스파클링)을 못 찾아 24·48·96입이 통째로 미매칭이었다. 캔 옵션은 아래에서 막는다(페트 단가로 새지 않게).
+  "바이탈레몬": "바이탈레몬스파클링 페트 500ml",
 };
 function ovShortBoxCost(pn, on, cost) {
   if (ovGrpOf(pn)) return null;
-  const ps = ovPieces(pn, String(on || "").replace(/^[^=]*=/, "")); if (!ps.length) return null;   // 「유주얌 전용 특가=」 키 제거
+  const body = String(on || "").replace(/^[^=]*=/, "");
+  const ps = ovPieces(pn, body); if (!ps.length) return null;   // 「유주얌 전용 특가=」 키 제거
+  if (/캔/.test(body) && ps.some(p => /바이탈/.test(OV_SHORT[p.fl] || ""))) return null;
   let boxCost = 0, cans = 0; const comp = [];
   for (const p of ps) {
     const text = OV_SHORT[p.fl]; if (!text || !(p.cnt > 0)) return null;
@@ -232,6 +241,22 @@ function ovShortBoxCost(pn, on, cost) {
     boxCost += unit * p.cnt; cans += p.cnt; comp.push({ text, cogs: unit * p.cnt, cans: p.cnt });
   }
   return { boxCost, cans, pieces: ps.length, comp };
+}
+
+// 261119 라벨형 구성 옵션(클룹 「[골라담기] 3종 맛보기 럭키박스」 「애사비소다 ①=콜라 (12개입), 원더팝=레몬트위스트 (12개입), …」):
+//   상품명에 그룹이 없고 조각이 쉼표로 이어져 ovPieces·ovShortBoxCost 모두 못 읽었다(11-06~18 주문 전부 미매칭).
+//   조각마다 「그룹 [번호]=맛 (N개입)」을 「그룹 맛*N」으로 바꿔 ovMixedBoxCost에 넘긴다. 한 조각이라도 형식이 다르면 null.
+function ovLabeledBoxCost(pn, on, cost) {
+  if (ovGrpOf(pn)) return null;
+  const parts = String(on || "").split(/\s*,\s*/).filter(Boolean);
+  if (parts.length < 2) return null;
+  const mixed = [];
+  for (const part of parts) {
+    const m = part.match(/^(.+?)\s*[①②③④⑤⑥⑦⑧⑨]?\s*[=:：]\s*(.+?)\s*\(\s*(\d+)\s*개입\s*\)\s*$/);
+    if (!m || !ovGrpOf(m[1])) return null;
+    mixed.push(`${m[1].trim()} ${m[2].trim()}*${m[3]}`);
+  }
+  return ovMixedBoxCost(`구성=${mixed.join(" / ")}`, cost);
 }
 
 // ===== 날짜 (KST) =====
@@ -409,6 +434,7 @@ module.exports = {
   ovBoxCost,
   ovMixedBoxCost,
   ovShortBoxCost,
+  ovLabeledBoxCost,
   sheetForDate,
   readCostLedger,
   kstDateStr,
