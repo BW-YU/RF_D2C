@@ -227,14 +227,12 @@ def main():
         notify_slack(msg)
         sys.exit(1)
 
+    # 261122 부문대표 「현재의 애매한 알림은 전체 삭제」: 슬랙에는 🔴 실제 지연(STALE)만 보낸다.
+    #   🟡 잠정(예: GA4 native final 대기 — 매일 05:41 반복)과 ✅ 정상은 Actions 로그에만 남긴다.
     if warnings:
-        lines = [f"🟡 데이터 신선도 잠정 ({len(warnings)}건):"]
-        lines += [f"• {r['label']}: {r['detail']}" for r in warnings]
-        notify_slack("\n".join(lines))
-        log.warning("품질 잠정 상태: %s", ", ".join(r["label"] for r in warnings))
+        log.warning("품질 잠정 상태: %s", ", ".join(f"{r['label']}: {r['detail']}" for r in warnings))
         return
 
-    notify_slack("✅ 데이터 신선도 정상 (" + ", ".join(r["label"] for r in results) + ")")
     log.info("전체 신선도 정상")
 
 
